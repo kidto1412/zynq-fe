@@ -4,7 +4,20 @@ import { GaugeRing } from './gauge-ring';
 import { ChunkStreamMatrix } from './chunk-stream-matrix';
 import { FileDropzone } from './file-dropzone';
 import { formatBytes } from '@/shared/lib/utils';
-import { Smartphone, ArrowRight, Film, Pause, Play, X, Zap, Hourglass, ShieldCheck, AlertCircle } from 'lucide-react';
+import {
+  Smartphone,
+  ArrowRight,
+  Film,
+  Folder,
+  Pause,
+  Play,
+  X,
+  Zap,
+  Hourglass,
+  ShieldCheck,
+  AlertCircle,
+  RefreshCw,
+} from 'lucide-react';
 
 export const TransferStreamView: React.FC = () => {
   const { activeTransfer, isPaused, togglePause, cancelTransfer, error } = useTransferStore();
@@ -30,7 +43,7 @@ export const TransferStreamView: React.FC = () => {
           </div>
         </div>
         <p className="text-xs text-on-surface-variant">
-          High-speed local peer-to-peer chunk streaming
+          High-speed local peer-to-peer chunk streaming · Auto-Resume enabled
         </p>
       </div>
 
@@ -56,10 +69,29 @@ export const TransferStreamView: React.FC = () => {
               <Smartphone className="w-3.5 h-3.5 text-primary" />
               <span className="font-mono text-xs text-on-surface">{activeTransfer.receiverDevice}</span>
             </div>
-            <span className="font-mono text-xs text-secondary bg-secondary/10 px-2.5 py-0.5 rounded-full border border-secondary/20">
-              {activeTransfer.status === 'streaming' ? 'Active Beam' : 'Idle'}
-            </span>
+            <div className="flex items-center gap-2">
+              {activeTransfer.isResumed && (
+                <span className="flex items-center gap-1 font-mono text-[11px] text-secondary bg-secondary/15 px-2.5 py-0.5 rounded-full border border-secondary/30">
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  Auto-Resumed
+                </span>
+              )}
+              <span className="font-mono text-xs text-secondary bg-secondary/10 px-2.5 py-0.5 rounded-full border border-secondary/20">
+                {activeTransfer.status === 'streaming' ? 'Active Beam' : 'Idle'}
+              </span>
+            </div>
           </div>
+
+          {/* Folder Batch Metadata if active */}
+          {activeTransfer.isFolder && (
+            <div className="flex items-center gap-1.5 font-mono text-[11px] text-on-surface bg-surface-container-lowest px-2.5 py-1 rounded-lg border border-white/[0.04] mb-2">
+              <Folder className="w-3.5 h-3.5 text-secondary flex-shrink-0" />
+              <span className="truncate">
+                Folder Tree · File {activeTransfer.batchIndex} dari {activeTransfer.batchTotal}:{' '}
+                <span className="text-secondary font-semibold">{activeTransfer.relativePath || activeTransfer.fileName}</span>
+              </span>
+            </div>
+          )}
 
           {/* File Metadata & Circular Gauge */}
           <div className="flex items-center gap-4 my-2">
@@ -67,7 +99,11 @@ export const TransferStreamView: React.FC = () => {
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-1">
-                <Film className="w-4 h-4 text-primary flex-shrink-0" />
+                {activeTransfer.isFolder ? (
+                  <Folder className="w-4 h-4 text-secondary flex-shrink-0" />
+                ) : (
+                  <Film className="w-4 h-4 text-primary flex-shrink-0" />
+                )}
                 <span className="font-headline text-sm text-on-surface font-semibold truncate">
                   {activeTransfer.fileName}
                 </span>

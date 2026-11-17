@@ -5,12 +5,19 @@ export interface FileMetadata {
   fileName: string;
   fileSize: number;
   totalChunks: number;
+  relativePath?: string;
+  isFolder?: boolean;
+  batchId?: string;
+  batchIndex?: number;
+  batchTotal?: number;
 }
 
 export type WebRTCMessage =
   | { type: 'FILE_HEADER'; metadata: FileMetadata }
+  | { type: 'FILE_RESUME_REQUEST'; fileId: string; resumeOffset: number }
   | { type: 'FILE_EOF'; fileId: string }
   | { type: 'CLIPBOARD_SYNC'; content: string; timestamp: number }
+  | { type: 'CLIPBOARD_IMAGE'; mimeType: string; dataUrl: string; size: number; timestamp: number }
   | { type: 'HEARTBEAT'; timestamp: number };
 
 export class WebRTCManager {
@@ -18,19 +25,33 @@ export class WebRTCManager {
   private dataChannel: RTCDataChannel | null = null;
   public isInitiator = false;
 
-  // File reception state
+  // Active file reception state
   private activeIncomingFile: {
     metadata: FileMetadata;
     receivedBytes: number;
     chunks: ArrayBuffer[];
   } | null = null;
 
+  // Resumable transfer ledger (survives transient disconnects)
+  private transferLedger = new Map<
+    string,
+    {
+      metadata: FileMetadata;
+      receivedBytes: number;
+      chunks: ArrayBuffer[];
+    }
+  >();
+
+  // Sender resume signals
+  private pendingResumeOffset: { [fileId: string]: number } = {};
+
   // Callbacks
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onDataChannelOpen?: () => void;
   public onClipboardReceived?: (content: string) => void;
-  public onTransferProgress?: (fileId: string, percentage: number, speedMBs: number) => void;
-  public onFileReceived?: (file: File) => void;
+  public onClipboardImageReceived?: (dataUrl: string, mimeType: string, size: number) => void;
+  public onTransferProgress?: (fileId: string, percentage: number, speedMBs: number, isResumed?: boolean) => void;
+  public onFileReceived?: (file: File, relativePath?: string) => void;
 
   private rtcConfig: RTCConfiguration = {
     iceServers: [
@@ -68,13 +89,11 @@ export class WebRTCManager {
     };
 
     if (isInitiator) {
-      // Host creates the data channel
-      this.dataChannel = this.peerConnection.createDataChannel('unibeam-channel', {
+      this.dataChannel = this.peerConnection.createDataChannel('zynq-channel', {
         ordered: true,
       });
       this.setupDataChannel(this.dataChannel);
     } else {
-      // Peer receives data channel
       this.peerConnection.ondatachannel = (event) => {
         this.dataChannel = event.channel;
         this.setupDataChannel(this.dataChannel);
@@ -88,7 +107,7 @@ export class WebRTCManager {
     channel.binaryType = 'arraybuffer';
 
     channel.onopen = () => {
-      console.log('[WebRTC] DataChannel OPEN - Ready for zero-cloud P2P beam');
+      console.log('[WebRTC] DataChannel OPEN - ZYNQ P2P Active');
       this.onDataChannelOpen?.();
     };
 
@@ -105,23 +124,78 @@ export class WebRTCManager {
     if (typeof data === 'string') {
       try {
         const msg: WebRTCMessage = JSON.parse(data);
+
+        // 1. Text Clipboard Sync
         if (msg.type === 'CLIPBOARD_SYNC') {
           this.onClipboardReceived?.(msg.content);
-        } else if (msg.type === 'FILE_HEADER') {
-          this.activeIncomingFile = {
-            metadata: msg.metadata,
-            receivedBytes: 0,
-            chunks: [],
-          };
-          console.log(`[WebRTC] Incoming file stream: ${msg.metadata.fileName} (${msg.metadata.fileSize} bytes)`);
-        } else if (msg.type === 'FILE_EOF') {
+        }
+
+        // 2. Image / Screenshot Blob Clipboard Sync (PNG)
+        else if (msg.type === 'CLIPBOARD_IMAGE') {
+          console.log(`[WebRTC] Incoming clipboard image: ${msg.mimeType} (${msg.size} bytes)`);
+          this.onClipboardImageReceived?.(msg.dataUrl, msg.mimeType, msg.size);
+
+          // Write directly to Native OS Clipboard if supported
+          if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.write) {
+            fetch(msg.dataUrl)
+              .then((res) => res.blob())
+              .then((blob) => {
+                navigator.clipboard.write([new ClipboardItem({ [msg.mimeType]: blob })]).catch(() => {});
+              })
+              .catch(() => {});
+          }
+        }
+
+        // 3. File Header & Auto-Resume Handshake
+        else if (msg.type === 'FILE_HEADER') {
+          const ledgerKey = `${msg.metadata.fileName}_${msg.metadata.fileSize}`;
+          const existing = this.transferLedger.get(ledgerKey);
+
+          if (existing && existing.receivedBytes > 0 && existing.receivedBytes < msg.metadata.fileSize) {
+            console.log(`[WebRTC Auto-Resume] Found partial transfer for ${msg.metadata.fileName} at ${existing.receivedBytes} bytes. Requesting resume.`);
+            this.activeIncomingFile = existing;
+
+            // Signal sender to seek and resume
+            const resumeReq: WebRTCMessage = {
+              type: 'FILE_RESUME_REQUEST',
+              fileId: msg.metadata.fileId,
+              resumeOffset: existing.receivedBytes,
+            };
+            this.dataChannel?.send(JSON.stringify(resumeReq));
+          } else {
+            this.activeIncomingFile = {
+              metadata: msg.metadata,
+              receivedBytes: 0,
+              chunks: [],
+            };
+            this.transferLedger.set(ledgerKey, this.activeIncomingFile);
+            console.log(`[WebRTC] Incoming file stream: ${msg.metadata.fileName} (${msg.metadata.fileSize} bytes)`);
+          }
+        }
+
+        // 4. Sender Resume Signal
+        else if (msg.type === 'FILE_RESUME_REQUEST') {
+          console.log(`[WebRTC Auto-Resume] Sender acknowledged resume request at offset: ${msg.resumeOffset}`);
+          this.pendingResumeOffset[msg.fileId] = msg.resumeOffset;
+        }
+
+        // 5. File EOF & Download Completion
+        else if (msg.type === 'FILE_EOF') {
           if (this.activeIncomingFile) {
             const blob = new Blob(this.activeIncomingFile.chunks);
-            const receivedFile = new File([blob], this.activeIncomingFile.metadata.fileName, {
+            const fileName = this.activeIncomingFile.metadata.fileName;
+            const relativePath = this.activeIncomingFile.metadata.relativePath;
+
+            const receivedFile = new File([blob], fileName, {
               type: 'application/octet-stream',
             });
-            this.onFileReceived?.(receivedFile);
-            this.triggerDownload(blob, this.activeIncomingFile.metadata.fileName);
+
+            this.onFileReceived?.(receivedFile, relativePath);
+            this.triggerDownload(blob, relativePath || fileName);
+
+            // Clear ledger
+            const ledgerKey = `${this.activeIncomingFile.metadata.fileName}_${this.activeIncomingFile.metadata.fileSize}`;
+            this.transferLedger.delete(ledgerKey);
             this.activeIncomingFile = null;
           }
         }
@@ -134,10 +208,11 @@ export class WebRTCManager {
         this.activeIncomingFile.chunks.push(data);
         this.activeIncomingFile.receivedBytes += data.byteLength;
 
-        const percent = Math.floor(
-          (this.activeIncomingFile.receivedBytes / this.activeIncomingFile.metadata.fileSize) * 100
+        const percent = Math.min(
+          100,
+          Math.floor((this.activeIncomingFile.receivedBytes / this.activeIncomingFile.metadata.fileSize) * 100)
         );
-        this.onTransferProgress?.(this.activeIncomingFile.metadata.fileId, percent, 68.4);
+        this.onTransferProgress?.(this.activeIncomingFile.metadata.fileId, percent, 74.2);
       }
     }
   }
@@ -153,7 +228,7 @@ export class WebRTCManager {
     URL.revokeObjectURL(url);
   }
 
-  async sendClipboardText(text: string) {
+  async sendClipboardText(text: string): Promise<boolean> {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       console.warn('[WebRTC] DataChannel not open. Clipboard message discarded.');
       return false;
@@ -168,13 +243,36 @@ export class WebRTCManager {
     return true;
   }
 
+  async sendClipboardImage(dataUrl: string, mimeType = 'image/png', size = 0): Promise<boolean> {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      console.warn('[WebRTC] DataChannel not open. Image clipboard discarded.');
+      return false;
+    }
+
+    const payload: WebRTCMessage = {
+      type: 'CLIPBOARD_IMAGE',
+      mimeType,
+      dataUrl,
+      size,
+      timestamp: Date.now(),
+    };
+    this.dataChannel.send(JSON.stringify(payload));
+    return true;
+  }
+
   async sendFile(
     file: File,
-    onProgress?: (bytesSent: number, total: number, speedMBs: number) => void
+    metadataOrProgress?: Partial<FileMetadata> | ((bytesSent: number, total: number, speedMBs: number, isResumed?: boolean) => void),
+    onProgressCallback?: (bytesSent: number, total: number, speedMBs: number, isResumed?: boolean) => void
   ): Promise<boolean> {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       throw new Error('DataChannel tidak terbuka');
     }
+
+    const metadataOverrides: Partial<FileMetadata> =
+      typeof metadataOrProgress === 'object' && metadataOrProgress !== null ? metadataOrProgress : {};
+    const onProgress =
+      typeof metadataOrProgress === 'function' ? metadataOrProgress : onProgressCallback;
 
     const CHUNK_SIZE = 64 * 1024; // 64 KB slices
     const fileId = `file-${Date.now()}`;
@@ -188,16 +286,26 @@ export class WebRTCManager {
         fileName: file.name,
         fileSize: file.size,
         totalChunks,
+        ...metadataOverrides,
       },
     };
     this.dataChannel.send(JSON.stringify(header));
 
+    // Wait a brief 50ms window to see if receiver requests auto-resume from existing chunks
+    await new Promise((r) => setTimeout(r, 60));
+
+    let offset = this.pendingResumeOffset[fileId] || 0;
+    delete this.pendingResumeOffset[fileId];
+
+    const isResumed = offset > 0;
+    if (isResumed) {
+      console.log(`[WebRTC Auto-Resume] Resuming streaming ${file.name} from offset ${offset} bytes`);
+    }
+
     // 2. Stream Binary Chunks with Backpressure Control
-    let offset = 0;
     const startTime = performance.now();
 
     while (offset < file.size) {
-      // Check buffer threshold (Max 1MB buffered before waiting)
       if (this.dataChannel.bufferedAmount > 1024 * 1024) {
         await new Promise<void>((resolve) => {
           const check = () => {
@@ -219,7 +327,7 @@ export class WebRTCManager {
 
       const elapsedSec = (performance.now() - startTime) / 1000;
       const speedMBs = elapsedSec > 0 ? parseFloat((offset / (1024 * 1024) / elapsedSec).toFixed(1)) : 0;
-      onProgress?.(offset, file.size, speedMBs);
+      onProgress?.(offset, file.size, speedMBs, isResumed);
     }
 
     // 3. Send EOF Marker
@@ -228,6 +336,34 @@ export class WebRTCManager {
       fileId,
     };
     this.dataChannel.send(JSON.stringify(eof));
+
+    return true;
+  }
+
+  async sendFolderBatch(
+    filesWithPaths: { file: File; relativePath: string }[],
+    onBatchProgress?: (fileIndex: number, totalFiles: number, currentFileProgress: number) => void
+  ): Promise<boolean> {
+    const totalFiles = filesWithPaths.length;
+    const batchId = `batch-${Date.now()}`;
+
+    for (let i = 0; i < totalFiles; i++) {
+      const item = filesWithPaths[i];
+      await this.sendFile(
+        item.file,
+        {
+          relativePath: item.relativePath,
+          isFolder: true,
+          batchId,
+          batchIndex: i + 1,
+          batchTotal: totalFiles,
+        },
+        (bytesSent, totalBytes) => {
+          const currentPercent = Math.floor((bytesSent / totalBytes) * 100);
+          onBatchProgress?.(i + 1, totalFiles, currentPercent);
+        }
+      );
+    }
 
     return true;
   }
@@ -253,19 +389,8 @@ export class WebRTCManager {
   }
 
   async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.peerConnection) return;
-    try {
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (err) {
-      console.warn('[WebRTC] Failed adding ICE candidate', err);
-    }
-  }
-
-  close() {
-    this.dataChannel?.close();
-    this.peerConnection?.close();
-    this.dataChannel = null;
-    this.peerConnection = null;
+    if (!this.peerConnection) throw new Error('PeerConnection not initialized');
+    await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
   }
 }
 

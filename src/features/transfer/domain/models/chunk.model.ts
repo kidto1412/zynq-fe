@@ -8,4 +8,10 @@ export interface TransferItem {
   senderDevice: string;
   receiverDevice: string;
   etaSeconds: number;
+  isFolder?: boolean;
+  relativePath?: string;
+  batchIndex?: number;
+  batchTotal?: number;
+  isResumed?: boolean;
+  batchId?: string;
 }
