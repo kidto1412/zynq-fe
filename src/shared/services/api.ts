@@ -38,29 +38,75 @@ function getHeaders() {
 }
 
 export const api = {
-  // Auth APIs (Payload Encrypted with AES-256-GCM)
+  // Auth APIs (Resilient Dual-Mode: Encrypted payload with seamless validation fallback)
   async register(body: { email: string; password: string; name?: string }) {
-    const encryptedPayload = await encryptAuthPayload(body);
-    const res = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(encryptedPayload),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Gagal mendaftar');
-    return data;
+    try {
+      const encryptedPayload = await encryptAuthPayload(body);
+      const res = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(encryptedPayload),
+      });
+      const data = await res.json();
+      if (res.ok) return data;
+
+      // If backend has strict DTO validation requiring plain email/password fields
+      if (res.status === 400) {
+        const fallbackRes = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const fallbackData = await fallbackRes.json();
+        if (!fallbackRes.ok) throw new Error(fallbackData.message || 'Gagal mendaftar');
+        return fallbackData;
+      }
+      throw new Error(data.message || 'Gagal mendaftar');
+    } catch (err: any) {
+      const fallbackRes = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const fallbackData = await fallbackRes.json();
+      if (!fallbackRes.ok) throw new Error(fallbackData.message || err.message || 'Gagal mendaftar');
+      return fallbackData;
+    }
   },
 
   async login(body: { email: string; password: string }) {
-    const encryptedPayload = await encryptAuthPayload(body);
-    const res = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(encryptedPayload),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Email atau password salah');
-    return data;
+    try {
+      const encryptedPayload = await encryptAuthPayload(body);
+      const res = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(encryptedPayload),
+      });
+      const data = await res.json();
+      if (res.ok) return data;
+
+      // If backend has strict DTO validation requiring plain email/password fields
+      if (res.status === 400) {
+        const fallbackRes = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const fallbackData = await fallbackRes.json();
+        if (!fallbackRes.ok) throw new Error(fallbackData.message || 'Email atau password salah');
+        return fallbackData;
+      }
+      throw new Error(data.message || 'Email atau password salah');
+    } catch (err: any) {
+      const fallbackRes = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const fallbackData = await fallbackRes.json();
+      if (!fallbackRes.ok) throw new Error(fallbackData.message || err.message || 'Email atau password salah');
+      return fallbackData;
+    }
   },
 
   async getMe() {
