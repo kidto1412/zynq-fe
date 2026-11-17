@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { encryptAuthPayload } from '../lib/crypto-payload';
 
 export interface SyncVaultPayload {
   userId: string;
@@ -37,12 +38,13 @@ function getHeaders() {
 }
 
 export const api = {
-  // Auth APIs
+  // Auth APIs (Payload Encrypted with AES-256-GCM)
   async register(body: { email: string; password: string; name?: string }) {
+    const encryptedPayload = await encryptAuthPayload(body);
     const res = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(encryptedPayload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || 'Gagal mendaftar');
@@ -50,10 +52,11 @@ export const api = {
   },
 
   async login(body: { email: string; password: string }) {
+    const encryptedPayload = await encryptAuthPayload(body);
     const res = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(encryptedPayload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || 'Email atau password salah');
