@@ -15,12 +15,26 @@ export class SignalingService {
       return this.socket;
     }
 
-    this.socket = io(env.VITE_WS_SIGNALING_URL, {
-      transports: ['websocket', 'polling'],
+    // Auto-detect production domain when VITE_WS_SIGNALING_URL still has localhost
+    let signalingUrl = env.VITE_WS_SIGNALING_URL;
+    if (
+      typeof window !== 'undefined' &&
+      !window.location.hostname.includes('localhost') &&
+      !window.location.hostname.includes('127.0.0.1') &&
+      signalingUrl.includes('localhost')
+    ) {
+      const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      signalingUrl = `${proto}//${window.location.host}/signaling`;
+    }
+
+    this.socket = io(signalingUrl, {
+      path: '/socket.io',
+      transports: ['polling', 'websocket'],
       autoConnect: true,
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: 15,
       reconnectionDelay: 1000,
+      timeout: 10000,
     });
 
     this.socket.on('connect', () => {

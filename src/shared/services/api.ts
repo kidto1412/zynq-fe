@@ -16,6 +16,18 @@ export interface CheckoutPayload {
   returnUrl?: string;
 }
 
+function getBaseUrl() {
+  if (
+    typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    env.VITE_API_URL.includes('localhost')
+  ) {
+    return window.location.origin;
+  }
+  return env.VITE_API_URL;
+}
+
 function getHeaders() {
   const token = localStorage.getItem('unibeam_token');
   return {
@@ -27,7 +39,7 @@ function getHeaders() {
 export const api = {
   // Auth APIs
   async register(body: { email: string; password: string; name?: string }) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/auth/register`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -38,7 +50,7 @@ export const api = {
   },
 
   async login(body: { email: string; password: string }) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/auth/login`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -49,7 +61,7 @@ export const api = {
   },
 
   async getMe() {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/auth/me`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/auth/me`, {
       headers: getHeaders(),
     });
     return res.json();
@@ -57,7 +69,7 @@ export const api = {
 
   // Vault APIs
   async syncVault(payload: SyncVaultPayload) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/vault/sync`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/vault/sync`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(payload),
@@ -66,7 +78,7 @@ export const api = {
   },
 
   async getVaultHistory(userId: string) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/vault/${userId}`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/vault/${userId}`, {
       headers: getHeaders(),
     });
     return res.json();
@@ -74,7 +86,7 @@ export const api = {
 
   // Billing APIs
   async createCheckout(payload: CheckoutPayload) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/billing/checkout`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/billing/checkout`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(payload),
@@ -83,14 +95,14 @@ export const api = {
   },
 
   async verifyLicense(licenseKey: string) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/billing/license/${licenseKey}`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/billing/license/${licenseKey}`, {
       headers: getHeaders(),
     });
     return res.json();
   },
 
   async checkTransactionStatus(transactionId: string) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/billing/transaction/${transactionId}`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/billing/transaction/${transactionId}`, {
       headers: getHeaders(),
     });
     return res.json();
@@ -104,7 +116,7 @@ export const api = {
     publicKey: string;
     userId?: string;
   }) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/devices/register`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/devices/register`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(device),
@@ -113,14 +125,14 @@ export const api = {
   },
 
   async getUserDevices(userId: string) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/devices/${userId}`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/devices/${userId}`, {
       headers: getHeaders(),
     });
     return res.json();
   },
 
   async updateDeviceSettings(deviceId: string, settings: { autoAccept?: boolean; clipboardSync?: boolean }) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/devices/${deviceId}/settings`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/devices/${deviceId}/settings`, {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify(settings),
@@ -129,7 +141,7 @@ export const api = {
   },
 
   async revokeDevice(deviceId: string) {
-    const res = await fetch(`${env.VITE_API_URL}/api/v1/devices/${deviceId}`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/devices/${deviceId}`, {
       method: 'DELETE',
       headers: getHeaders(),
     });
