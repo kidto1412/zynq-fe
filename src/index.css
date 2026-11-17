@@ -45,3 +45,33 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #313540;
 }
+
+/* HTML5 QR Code Scanner Custom Styling - Edge-to-Edge Fluid Viewfinder */
+#zynq-qr-reader {
+  width: 100% !important;
+  border: none !important;
+  padding: 0 !important;
+  background: transparent !important;
+  position: relative !important;
+}
+
+#zynq-qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 1rem !important;
+  display: block !important;
+}
+
+#zynq-qr-reader img[alt="Info icon"],
+#zynq-qr-reader span,
+#zynq-qr-reader div > a {
+  display: none !important;
+}
+
+#zynq-qr-reader__scan_region {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 240px !important;
+}

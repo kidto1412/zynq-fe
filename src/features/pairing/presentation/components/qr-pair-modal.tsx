@@ -49,6 +49,13 @@ export const QrPairModal: React.FC = () => {
     defaultValues: { pin: '' },
   });
 
+  // Auto-generate room if PIN is not yet set when opening modal
+  React.useEffect(() => {
+    if (isQrModalOpen && (activePin === '------' || !activeRoomId)) {
+      createRealRoom();
+    }
+  }, [isQrModalOpen, activePin, activeRoomId, createRealRoom]);
+
   // Generate payload for QR Code
   const qrString = React.useMemo(() => {
     return JSON.stringify({
@@ -92,9 +99,14 @@ export const QrPairModal: React.FC = () => {
       scannerRef.current = html5QrCode;
 
       const config = {
-        fps: 10,
-        qrbox: { width: 220, height: 220 },
-        aspectRatio: 1.0,
+        fps: 15,
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75);
+          return {
+            width: Math.max(edge, 180),
+            height: Math.max(edge, 180),
+          };
+        },
       };
 
       html5QrCode
@@ -278,8 +290,15 @@ export const QrPairModal: React.FC = () => {
         {/* Mode 1: Display QR & PIN (Host) */}
         {mode === 'display' && (
           <div className="flex flex-col items-center space-y-4 w-full animate-in fade-in duration-200">
-            <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center">
-              <canvas ref={canvasRef} className="rounded-lg" />
+            <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
+              {activePin === '------' ? (
+                <div className="flex flex-col items-center justify-center gap-2 p-6 text-slate-800">
+                  <RefreshCw className="w-8 h-8 animate-spin text-cyan-600" />
+                  <span className="text-xs font-semibold">Menyiapkan Room P2P...</span>
+                </div>
+              ) : (
+                <canvas ref={canvasRef} className="rounded-lg" />
+              )}
             </div>
 
             <div className="flex flex-col items-center gap-1.5 w-full">
@@ -315,14 +334,14 @@ export const QrPairModal: React.FC = () => {
         {/* Mode 2: Camera Scanner (Peer) */}
         {mode === 'scan' && (
           <div className="flex flex-col items-center space-y-3 w-full animate-in fade-in duration-200">
-            <div className="relative w-full aspect-square max-w-[260px] bg-slate-950 rounded-2xl overflow-hidden border border-primary/30 shadow-lg flex items-center justify-center">
+            <div className="relative w-full min-h-[260px] bg-slate-950 rounded-2xl overflow-hidden border border-primary/30 shadow-lg flex items-center justify-center">
               {/* Camera Video Viewfinder Target */}
-              <div id="zynq-qr-reader" className="w-full h-full" />
+              <div id="zynq-qr-reader" className="w-full" />
 
               {/* Viewfinder Target Framing Overlay */}
               {isCameraActive && (
-                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
-                  <div className="w-48 h-48 border-2 border-primary/70 rounded-xl relative shadow-[0_0_15px_rgba(0,240,255,0.3)]">
+                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4">
+                  <div className="w-48 h-48 border-2 border-primary/80 rounded-xl relative shadow-[0_0_15px_rgba(0,240,255,0.4)]">
                     {/* Laser Scanner Animation */}
                     <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_10px_#00f0ff] animate-pulse top-1/2 -translate-y-1/2" />
                     <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-primary" />
@@ -335,14 +354,14 @@ export const QrPairModal: React.FC = () => {
 
               {/* Camera Loading or Error State */}
               {!isCameraActive && !cameraError && (
-                <div className="flex flex-col items-center gap-2 text-on-surface-variant p-4">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-on-surface-variant p-4">
                   <RefreshCw className="w-6 h-6 animate-spin text-primary" />
                   <span className="text-xs">Mengaktifkan kamera...</span>
                 </div>
               )}
 
               {cameraError && (
-                <div className="flex flex-col items-center gap-2 text-rose-400 p-4 text-xs">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-rose-400 p-4 text-xs">
                   <CameraOff className="w-8 h-8 text-rose-400 mb-1" />
                   <span>{cameraError}</span>
                 </div>
