@@ -17,7 +17,9 @@ import {
   Download,
   Sparkles,
   Maximize2,
-  X
+  X,
+  Flame,
+  ShieldCheck
 } from 'lucide-react';
 
 export const UniversalClipboardView: React.FC = () => {
@@ -30,7 +32,8 @@ export const UniversalClipboardView: React.FC = () => {
     clearActiveBuffer, 
     copyToLocalClipboard,
     addNewItem,
-    readLocalClipboard
+    readLocalClipboard,
+    panicPurgeVault
   } = useClipboardStore();
 
   const user = useAuthStore((state) => state.user);
@@ -40,6 +43,7 @@ export const UniversalClipboardView: React.FC = () => {
   const [inputText, setInputText] = React.useState('');
   const [previewModalUrl, setPreviewModalUrl] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [purgeSuccess, setPurgeSuccess] = React.useState<string | null>(null);
   const imageInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleCopy = async (id: string, textOrDataUrl: string) => {
@@ -48,6 +52,12 @@ export const UniversalClipboardView: React.FC = () => {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     }
+  };
+
+  const handlePanicPurge = async () => {
+    const count = await panicPurgeVault();
+    setPurgeSuccess(`Ghost Panic Purge: ${count} rekaman vault dihapus permanen dari cloud & memori.`);
+    setTimeout(() => setPurgeSuccess(null), 4000);
   };
 
   const handleManualAdd = (e: React.FormEvent) => {
@@ -92,13 +102,31 @@ export const UniversalClipboardView: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-headline text-lg font-bold text-on-surface">Universal Clipboard</h2>
-          <p className="text-xs text-on-surface-variant">Real-time clipboard stream via WebRTC & PostgreSQL Vault</p>
+          <p className="text-xs text-on-surface-variant">
+            {isPro
+              ? 'Zero-Knowledge Cloud Vault · Ghost Auto-Purge 30-Hari'
+              : 'RAM-Only Ephemeral Sync · Hilang saat tab ditutup'}
+          </p>
         </div>
         <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-high border border-white/[0.04]">
           <span className="w-2 h-2 rounded-full bg-secondary animate-pulse shadow-[0_0_8px_rgba(78,222,163,0.9)]" />
-          <span className="font-mono text-xs text-secondary font-bold uppercase tracking-wider">Mesh P2P</span>
+          <span className="font-mono text-xs text-secondary font-bold uppercase tracking-wider">
+            {isPro ? 'Mesh Group Beam (≤5)' : '1:1 Direct P2P'}
+          </span>
         </div>
       </div>
+
+      {purgeSuccess && (
+        <div className="bg-secondary/10 border border-secondary/30 p-3 rounded-xl flex items-center justify-between gap-2 text-xs text-secondary font-mono">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+            <span>{purgeSuccess}</span>
+          </div>
+          <button onClick={() => setPurgeSuccess(null)} className="text-on-surface-variant hover:text-on-surface">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {errorMessage && (
         <div className="bg-primary/10 border border-primary/30 p-3 rounded-xl flex items-center justify-between gap-2 text-xs text-primary font-mono">
@@ -159,9 +187,9 @@ export const UniversalClipboardView: React.FC = () => {
               </p>
               <div className="flex items-center gap-1.5 font-mono text-[11px] text-secondary">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-secondary" />
-                <span>Zero Cloud Relay Latency</span>
+                <span>{isPro ? '1-to-Many Group Beam' : '1-to-1 Direct P2P'}</span>
                 <span className="text-on-surface-variant">•</span>
-                <span className="text-on-surface-variant">Direct DTLS 1.3</span>
+                <span>{isPro ? 'ZK Vault 30D' : 'RAM-only'}</span>
               </div>
             </div>
           </div>
@@ -319,10 +347,35 @@ export const UniversalClipboardView: React.FC = () => {
       {/* 3. Clipboard History Stream */}
       <div className="space-y-2">
         <div className="flex items-center justify-between px-1">
-          <span className="font-headline text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-            Encrypted History Stream (PostgreSQL Vault)
-          </span>
-          <span className="font-mono text-xs text-on-surface-variant">{historyItems.length} Items</span>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-headline text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+                {isPro ? 'Zero-Knowledge Vault (PostgreSQL)' : 'RAM-Only History Stream'}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-surface-container-highest text-on-surface-variant">
+                {isPro ? '30D E2EE' : 'Volatile'}
+              </span>
+            </div>
+            <p className="text-[11px] text-on-surface-variant/70 font-mono mt-0.5">
+              {isPro
+                ? 'Ghost Auto-Purge aktif · Enkripsi AES-256-GCM client-side'
+                : 'Hilang otomatis saat tab ditutup (Zero Disk Trace)'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isPro && (
+              <button
+                onClick={handlePanicPurge}
+                title="Instant Panic Purge: Hapus semua rekaman vault dari cloud & lokal"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-error-container/30 hover:bg-error-container text-error text-[11px] font-mono font-semibold transition-all"
+              >
+                <Flame className="w-3 h-3" />
+                <span>Panic Purge</span>
+              </button>
+            )}
+            <span className="font-mono text-xs text-on-surface-variant">{historyItems.length} Items</span>
+          </div>
         </div>
 
         {historyItems.length > 0 ? (
@@ -401,7 +454,9 @@ export const UniversalClipboardView: React.FC = () => {
           ))
         ) : (
           <div className="p-4 rounded-xl bg-surface-container-low text-center text-xs text-on-surface-variant font-mono">
-            Belum ada riwayat clipboard tersimpan.
+            {isPro
+              ? 'Belum ada riwayat clipboard tersimpan di Zero-Knowledge Vault.'
+              : 'Belum ada riwayat clipboard aktif (Mode RAM-only).'}
           </div>
         )}
       </div>

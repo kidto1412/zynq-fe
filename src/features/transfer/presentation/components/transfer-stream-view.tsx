@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTransferStore } from '../stores/useTransferStore';
+import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
 import { GaugeRing } from './gauge-ring';
 import { ChunkStreamMatrix } from './chunk-stream-matrix';
 import { FileDropzone } from './file-dropzone';
@@ -21,6 +22,8 @@ import {
 
 export const TransferStreamView: React.FC = () => {
   const { activeTransfer, isPaused, togglePause, cancelTransfer, error } = useTransferStore();
+  const user = useAuthStore((state) => state.user);
+  const isPro = user?.plan === 'PRO_LIFETIME';
 
   const percentage =
     activeTransfer && activeTransfer.fileSize > 0
@@ -43,7 +46,9 @@ export const TransferStreamView: React.FC = () => {
           </div>
         </div>
         <p className="text-xs text-on-surface-variant">
-          High-speed local peer-to-peer chunk streaming · Auto-Resume enabled
+          {isPro
+            ? 'Mesh Group Beam (Hingga 5 Perangkat) · Auto-Resume enabled'
+            : 'Direct 1-to-1 P2P Chunk Streaming · WebRTC DataChannel'}
         </p>
       </div>
 
@@ -145,7 +150,7 @@ export const TransferStreamView: React.FC = () => {
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-1.5 text-xs font-mono text-on-surface-variant">
               <ShieldCheck className="w-3.5 h-3.5 text-secondary" />
-              <span>Direct 5GHz Wi-Fi P2P</span>
+              <span>{isPro ? 'Mesh Group Beam (Hingga 5 Perangkat)' : '1-to-1 Direct 5GHz P2P'}</span>
             </div>
 
             <div className="flex items-center gap-2">

@@ -23,6 +23,7 @@ export type WebRTCMessage =
 export class WebRTCManager {
   private peerConnection: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
+  private peerChannels: Map<string, RTCDataChannel> = new Map();
   public isInitiator = false;
 
   // Active file reception state
@@ -52,6 +53,7 @@ export class WebRTCManager {
   public onClipboardImageReceived?: (dataUrl: string, mimeType: string, size: number) => void;
   public onTransferProgress?: (fileId: string, percentage: number, speedMBs: number, isResumed?: boolean) => void;
   public onFileReceived?: (file: File, relativePath?: string) => void;
+  public onPeersCountChange?: (count: number) => void;
 
   private rtcConfig: RTCConfiguration = {
     iceServers: [
@@ -103,16 +105,53 @@ export class WebRTCManager {
     return this.peerConnection;
   }
 
-  private setupDataChannel(channel: RTCDataChannel) {
+  public registerMeshPeer(peerId: string, channel: RTCDataChannel) {
+    this.peerChannels.set(peerId, channel);
+    this.setupDataChannel(channel, peerId);
+  }
+
+  public getConnectedPeersCount(): number {
+    let count = 0;
+    if (this.dataChannel && this.dataChannel.readyState === 'open') count++;
+    for (const [_, ch] of this.peerChannels) {
+      if (ch !== this.dataChannel && ch.readyState === 'open') count++;
+    }
+    return count;
+  }
+
+  public broadcastMessage(data: string | ArrayBuffer): boolean {
+    let sent = false;
+    if (this.dataChannel && this.dataChannel.readyState === 'open') {
+      try {
+        this.dataChannel.send(data as any);
+        sent = true;
+      } catch {}
+    }
+    for (const [_, ch] of this.peerChannels) {
+      if (ch !== this.dataChannel && ch.readyState === 'open') {
+        try {
+          ch.send(data as any);
+          sent = true;
+        } catch {}
+      }
+    }
+    return sent;
+  }
+
+  private setupDataChannel(channel: RTCDataChannel, peerId?: string) {
     channel.binaryType = 'arraybuffer';
 
     channel.onopen = () => {
-      console.log('[WebRTC] DataChannel OPEN - ZYNQ P2P Active');
+      console.log(`[WebRTC] DataChannel OPEN (Mesh Node: ${peerId || 'primary'})`);
+      if (peerId) this.peerChannels.set(peerId, channel);
       this.onDataChannelOpen?.();
+      this.onPeersCountChange?.(this.getConnectedPeersCount());
     };
 
     channel.onclose = () => {
-      console.log('[WebRTC] DataChannel CLOSED');
+      console.log(`[WebRTC] DataChannel CLOSED (${peerId || 'primary'})`);
+      if (peerId) this.peerChannels.delete(peerId);
+      this.onPeersCountChange?.(this.getConnectedPeersCount());
     };
 
     channel.onmessage = (event) => {
@@ -229,26 +268,15 @@ export class WebRTCManager {
   }
 
   async sendClipboardText(text: string): Promise<boolean> {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.warn('[WebRTC] DataChannel not open. Clipboard message discarded.');
-      return false;
-    }
-
     const payload: WebRTCMessage = {
       type: 'CLIPBOARD_SYNC',
       content: text,
       timestamp: Date.now(),
     };
-    this.dataChannel.send(JSON.stringify(payload));
-    return true;
+    return this.broadcastMessage(JSON.stringify(payload));
   }
 
   async sendClipboardImage(dataUrl: string, mimeType = 'image/png', size = 0): Promise<boolean> {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.warn('[WebRTC] DataChannel not open. Image clipboard discarded.');
-      return false;
-    }
-
     const payload: WebRTCMessage = {
       type: 'CLIPBOARD_IMAGE',
       mimeType,
@@ -256,8 +284,7 @@ export class WebRTCManager {
       size,
       timestamp: Date.now(),
     };
-    this.dataChannel.send(JSON.stringify(payload));
-    return true;
+    return this.broadcastMessage(JSON.stringify(payload));
   }
 
   async sendFile(
@@ -265,10 +292,6 @@ export class WebRTCManager {
     metadataOrProgress?: Partial<FileMetadata> | ((bytesSent: number, total: number, speedMBs: number, isResumed?: boolean) => void),
     onProgressCallback?: (bytesSent: number, total: number, speedMBs: number, isResumed?: boolean) => void
   ): Promise<boolean> {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      throw new Error('DataChannel tidak terbuka');
-    }
-
     const metadataOverrides: Partial<FileMetadata> =
       typeof metadataOrProgress === 'object' && metadataOrProgress !== null ? metadataOrProgress : {};
     const onProgress =
@@ -278,7 +301,7 @@ export class WebRTCManager {
     const fileId = `file-${Date.now()}`;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-    // 1. Send Header
+    // 1. Send Header via Mesh Broadcast
     const header: WebRTCMessage = {
       type: 'FILE_HEADER',
       metadata: {
@@ -289,7 +312,7 @@ export class WebRTCManager {
         ...metadataOverrides,
       },
     };
-    this.dataChannel.send(JSON.stringify(header));
+    this.broadcastMessage(JSON.stringify(header));
 
     // Wait a brief 50ms window to see if receiver requests auto-resume from existing chunks
     await new Promise((r) => setTimeout(r, 60));
@@ -302,11 +325,11 @@ export class WebRTCManager {
       console.log(`[WebRTC Auto-Resume] Resuming streaming ${file.name} from offset ${offset} bytes`);
     }
 
-    // 2. Stream Binary Chunks with Backpressure Control
+    // 2. Stream Binary Chunks with Backpressure Control across Mesh Channels
     const startTime = performance.now();
 
     while (offset < file.size) {
-      if (this.dataChannel.bufferedAmount > 1024 * 1024) {
+      if (this.dataChannel && this.dataChannel.bufferedAmount > 1024 * 1024) {
         await new Promise<void>((resolve) => {
           const check = () => {
             if (!this.dataChannel || this.dataChannel.bufferedAmount < 512 * 1024) {
@@ -321,7 +344,7 @@ export class WebRTCManager {
 
       const slice = file.slice(offset, offset + CHUNK_SIZE);
       const buffer = await slice.arrayBuffer();
-      this.dataChannel.send(buffer);
+      this.broadcastMessage(buffer);
 
       offset += buffer.byteLength;
 
@@ -335,7 +358,7 @@ export class WebRTCManager {
       type: 'FILE_EOF',
       fileId,
     };
-    this.dataChannel.send(JSON.stringify(eof));
+    this.broadcastMessage(JSON.stringify(eof));
 
     return true;
   }

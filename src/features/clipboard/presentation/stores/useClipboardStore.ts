@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { ClipboardItem } from '../../domain/models/clipboard-item.model';
 import { webrtcManager } from '@/shared/services/webrtc-manager';
 import { api } from '@/shared/services/api';
+import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
+import { encryptZeroKnowledge, decryptZeroKnowledge } from '@/shared/lib/crypto-payload';
 
 interface ClipboardStore {
   autoSync: boolean;
@@ -17,6 +19,7 @@ interface ClipboardStore {
   readLocalClipboard: () => Promise<void>;
   copyToLocalClipboard: (content: string) => Promise<boolean>;
   loadVaultHistory: (userId?: string) => Promise<void>;
+  panicPurgeVault: () => Promise<number>;
 }
 
 export const useClipboardStore = create<ClipboardStore>((set, get) => {
@@ -72,28 +75,36 @@ export const useClipboardStore = create<ClipboardStore>((set, get) => {
       const { activeItem, historyItems } = get();
       if (!activeItem) return;
 
-      // 1. Send via real WebRTC DataChannel (Image or Text)
+      // 1. Send via real WebRTC DataChannel (Group Beam / 1-to-1)
       if (activeItem.type === 'image') {
         await webrtcManager.sendClipboardImage(activeItem.content, activeItem.mimeType || 'image/png');
       } else {
         await webrtcManager.sendClipboardText(activeItem.content);
       }
 
-      // 2. Persist to real NestJS PostgreSQL Vault
-      try {
-        set({ isSyncingVault: true });
-        await api.syncVault({
-          userId: 'default-user',
-          sourceDevice: activeItem.sourceDevice,
-          contentType: activeItem.type,
-          encryptedData: activeItem.content.length > 50000 ? activeItem.content.substring(0, 50000) : btoa(activeItem.content),
-          iv: 'aes-gcm-iv',
-          byteSize: activeItem.content.length,
-        });
-      } catch (err) {
-        console.warn('[ClipboardStore] Backend vault sync error:', err);
-      } finally {
-        set({ isSyncingVault: false });
+      // 2. PRD Keamanan Clipboard: Free Tier is strictly RAM-only!
+      const user = useAuthStore.getState().user;
+      const isPro = user?.plan === 'PRO_LIFETIME';
+
+      if (isPro && user?.id) {
+        // Zero-Knowledge Client-Side Encryption before sending to Cloud Vault
+        try {
+          set({ isSyncingVault: true });
+          const { encryptedData, iv } = await encryptZeroKnowledge(activeItem.content);
+
+          await api.syncVault({
+            userId: user.id,
+            sourceDevice: activeItem.sourceDevice,
+            contentType: activeItem.type,
+            encryptedData,
+            iv,
+            byteSize: activeItem.content.length,
+          });
+        } catch (err) {
+          console.warn('[ClipboardStore] Backend zero-knowledge vault sync error:', err);
+        } finally {
+          set({ isSyncingVault: false });
+        }
       }
 
       set({
@@ -138,7 +149,7 @@ export const useClipboardStore = create<ClipboardStore>((set, get) => {
                     historyItems: [newItem, ...state.historyItems],
                   }));
 
-                  // Transmit over WebRTC DataChannel
+                  // Transmit over WebRTC DataChannel (1-to-Many Group Beam / 1-to-1)
                   await webrtcManager.sendClipboardImage(dataUrl, mimeType, blob.size);
                 };
                 reader.readAsDataURL(blob);
@@ -182,25 +193,31 @@ export const useClipboardStore = create<ClipboardStore>((set, get) => {
         historyItems: [newItem, ...state.historyItems],
       }));
 
-      // Broadcast immediately across open WebRTC DataChannel
+      // Broadcast immediately across open WebRTC DataChannels (Group Beam / 1-to-1)
       if (resolvedType === 'image') {
         await webrtcManager.sendClipboardImage(content, newItem.mimeType);
       } else {
         await webrtcManager.sendClipboardText(content);
       }
 
-      // Persist to backend vault
-      try {
-        await api.syncVault({
-          userId: 'default-user',
-          sourceDevice: 'This Device',
-          contentType: resolvedType,
-          encryptedData: content.length > 50000 ? content.substring(0, 50000) : btoa(content),
-          iv: 'aes-gcm-iv',
-          byteSize: content.length,
-        });
-      } catch {
-        // Vault persist optional
+      // Pro Tier: Persist to Zero-Knowledge Vault
+      const user = useAuthStore.getState().user;
+      const isPro = user?.plan === 'PRO_LIFETIME';
+
+      if (isPro && user?.id) {
+        try {
+          const { encryptedData, iv } = await encryptZeroKnowledge(content);
+          await api.syncVault({
+            userId: user.id,
+            sourceDevice: 'This Device',
+            contentType: resolvedType,
+            encryptedData,
+            iv,
+            byteSize: content.length,
+          });
+        } catch {
+          // Vault persist optional
+        }
       }
     },
 
@@ -225,25 +242,56 @@ export const useClipboardStore = create<ClipboardStore>((set, get) => {
       }
     },
 
-    loadVaultHistory: async (userId = 'default-user') => {
+    loadVaultHistory: async (userId) => {
+      const targetUserId = userId || useAuthStore.getState().user?.id;
+      if (!targetUserId) return;
+
+      const user = useAuthStore.getState().user;
+      if (user?.plan !== 'PRO_LIFETIME') {
+        // Free tier is strictly RAM-only
+        return;
+      }
+
       try {
-        const res = await api.getVaultHistory(userId);
+        const res = await api.getVaultHistory(targetUserId);
         if (res.success && Array.isArray(res.data)) {
-          const mapped: ClipboardItem[] = res.data.map((entry: any) => ({
-            id: entry.id,
-            type: entry.contentType as ClipboardItem['type'],
-            content: atob(entry.encryptedData || '') || entry.encryptedData,
-            sourceDevice: entry.sourceDevice || 'Cloud Vault',
-            timestamp: new Date(entry.createdAt).toLocaleTimeString(),
-            byteSize: `${entry.byteSize || 0} B`,
-          }));
+          const mapped: ClipboardItem[] = await Promise.all(
+            res.data.map(async (entry: any) => {
+              const decryptedContent = await decryptZeroKnowledge(entry.encryptedData, entry.iv);
+              return {
+                id: entry.id,
+                type: entry.contentType as ClipboardItem['type'],
+                content: decryptedContent,
+                sourceDevice: entry.sourceDevice || 'Zero-Knowledge Vault',
+                timestamp: new Date(entry.createdAt).toLocaleTimeString(),
+                byteSize: `${entry.byteSize || 0} B`,
+              };
+            })
+          );
 
           set((state) => ({
             historyItems: [...mapped, ...state.historyItems.filter((i) => !mapped.some((m) => m.id === i.id))],
           }));
         }
       } catch (err) {
-        console.warn('[ClipboardStore] Could not load vault history:', err);
+        console.warn('[ClipboardStore] Could not load zero-knowledge vault history:', err);
+      }
+    },
+
+    panicPurgeVault: async () => {
+      const user = useAuthStore.getState().user;
+      if (!user?.id) {
+        set({ historyItems: [], activeItem: null });
+        return 0;
+      }
+
+      try {
+        const res = await api.panicPurgeVault(user.id);
+        set({ historyItems: [], activeItem: null });
+        return res.purgedCount || 0;
+      } catch {
+        set({ historyItems: [], activeItem: null });
+        return 0;
       }
     },
   };

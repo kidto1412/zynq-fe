@@ -4,6 +4,7 @@ import { signalingService } from '@/shared/services/signaling-service';
 import { webrtcManager } from '@/shared/services/webrtc-manager';
 import { getLocalDeviceInfo } from '@/shared/lib/device-detector';
 import { api } from '@/shared/services/api';
+import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
 
 interface PairingStore {
   currentDevice: DevicePeer;
@@ -139,12 +140,14 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
 
   createRealRoom: async () => {
     const { currentDevice } = get();
+    const isPro = useAuthStore.getState().user?.plan === 'PRO_LIFETIME';
     set({ isCreatingRoom: true, errorMessage: null });
     try {
       const room = await signalingService.createRoom({
         deviceName: currentDevice.name,
         platform: currentDevice.platform,
         publicKey: currentDevice.fingerprint,
+        isPro,
       });
 
       set({

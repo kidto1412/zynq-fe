@@ -90,10 +90,16 @@ export class SignalingService {
     });
   }
 
-  async createRoom(deviceInfo: { deviceName: string; platform: string; publicKey: string }): Promise<{
+  async createRoom(deviceInfo: {
+    deviceName: string;
+    platform: string;
+    publicKey: string;
+    isPro?: boolean;
+  }): Promise<{
     roomId: string;
     pin: string;
     qrPayload: string;
+    maxPeers?: number;
   }> {
     const socket = await this.ensureConnected();
 

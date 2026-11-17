@@ -15,6 +15,71 @@ function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
   return btoa(binary);
 }
 
+function base64ToBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+export async function encryptZeroKnowledge(
+  plaintext: string,
+  userPassphrase = 'zynq-zk-vault-master-key'
+): Promise<{ encryptedData: string; iv: string }> {
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userPassphrase));
+  const key = await crypto.subtle.importKey(
+    'raw',
+    hashBuffer,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encoder.encode(plaintext)
+  );
+  return {
+    encryptedData: bufferToBase64(encryptedBuffer),
+    iv: bufferToBase64(iv),
+  };
+}
+
+export async function decryptZeroKnowledge(
+  encryptedDataB64: string,
+  ivB64?: string,
+  userPassphrase = 'zynq-zk-vault-master-key'
+): Promise<string> {
+  try {
+    if (!ivB64) return atob(encryptedDataB64);
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userPassphrase));
+    const key = await crypto.subtle.importKey(
+      'raw',
+      hashBuffer,
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    const iv = base64ToBuffer(ivB64);
+    const data = base64ToBuffer(encryptedDataB64);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv) },
+      key,
+      data
+    );
+    const decoder = new TextDecoder();
+    return decoder.decode(decryptedBuffer);
+  } catch {
+    return atob(encryptedDataB64) || encryptedDataB64;
+  }
+}
+
 let cachedCryptoKey: CryptoKey | null = null;
 
 async function getDerivedKey(secret: string): Promise<CryptoKey> {

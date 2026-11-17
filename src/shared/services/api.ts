@@ -87,6 +87,22 @@ export const api = {
     return res.json();
   },
 
+  async panicPurgeVault(userId: string) {
+    const res = await fetch(`${getBaseUrl()}/api/v1/vault/purge/${userId}`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return res.json();
+  },
+
+  async ghostPurgeVault() {
+    const res = await fetch(`${getBaseUrl()}/api/v1/vault/ghost-purge`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return res.json();
+  },
+
   // Billing APIs
   async createCheckout(payload: CheckoutPayload) {
     const res = await fetch(`${getBaseUrl()}/api/v1/billing/checkout`, {
