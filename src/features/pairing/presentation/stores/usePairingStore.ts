@@ -156,13 +156,12 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
         errorMessage: null,
       });
     } catch (err: any) {
-      console.warn('[Signaling] Failed to create room on backend, generating instant provisional PIN:', err.message);
-      const provisionalPin = Math.floor(100000 + Math.random() * 900000).toString();
+      console.warn('[Signaling] Failed to create room on backend:', err.message);
       set({
-        activePin: provisionalPin,
-        activeRoomId: `room-${provisionalPin}`,
+        activePin: '------',
+        activeRoomId: null,
         isCreatingRoom: false,
-        errorMessage: 'Koneksi real-time sedang menghubungkan ulang...',
+        errorMessage: err.message || 'Koneksi ke backend signaling gagal. Periksa koneksi atau coba lagi.',
       });
     }
   },

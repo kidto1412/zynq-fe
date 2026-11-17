@@ -62,27 +62,31 @@ export class SignalingService {
     if (socket.connected) return socket;
 
     return new Promise((resolve, reject) => {
+      if (socket.connected) {
+        resolve(socket);
+        return;
+      }
+
       const onConn = () => {
         cleanup();
         resolve(socket);
       };
-      const onErr = (err: any) => {
-        cleanup();
-        reject(err);
-      };
+
       const timer = setTimeout(() => {
         cleanup();
-        reject(new Error('Signaling connection timeout'));
-      }, 5000);
+        if (socket.connected) {
+          resolve(socket);
+        } else {
+          reject(new Error('Signaling connection timeout (12s)'));
+        }
+      }, 12000);
 
       const cleanup = () => {
         clearTimeout(timer);
         socket.off('connect', onConn);
-        socket.off('connect_error', onErr);
       };
 
       socket.once('connect', onConn);
-      socket.once('connect_error', onErr);
     });
   }
 

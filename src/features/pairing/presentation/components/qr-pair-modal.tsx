@@ -146,7 +146,11 @@ export const QrPairModal: React.FC = () => {
                   setQrModalOpen(false);
                 }, 1200);
               } catch (err: any) {
-                setCameraError(err.message || 'Gagal pairing dengan QR ini');
+                console.error('[QR Pairing] Join failed:', err);
+                const msg = err.message?.includes('does not exist')
+                  ? 'PIN / Kode QR tidak ditemukan di server atau sudah kedaluwarsa. Pastikan QR aktif di perangkat lawan.'
+                  : (err.message || 'Gagal pairing dengan QR ini');
+                setCameraError(msg);
               } finally {
                 setIsSubmitting(false);
               }
@@ -287,11 +291,25 @@ export const QrPairModal: React.FC = () => {
         {mode === 'display' && (
           <div className="flex flex-col items-center space-y-4 w-full animate-in fade-in duration-200">
             <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
-              {activePin === '------' && isCreatingRoom ? (
-                <div className="flex flex-col items-center justify-center gap-2 p-6 text-slate-800">
-                  <RefreshCw className="w-8 h-8 animate-spin text-cyan-600" />
-                  <span className="text-xs font-semibold">Menyiapkan Room P2P...</span>
-                </div>
+              {activePin === '------' ? (
+                isCreatingRoom ? (
+                  <div className="flex flex-col items-center justify-center gap-2 p-6 text-slate-800">
+                    <RefreshCw className="w-8 h-8 animate-spin text-cyan-600" />
+                    <span className="text-xs font-semibold">Menyiapkan Room P2P...</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 p-4 text-slate-800 max-w-[200px]">
+                    <AlertCircle className="w-8 h-8 text-amber-500" />
+                    <span className="text-xs font-semibold text-center">Gagal Membuat Room</span>
+                    <Button
+                      type="button"
+                      onClick={() => createRealRoom()}
+                      className="text-xs h-8 px-3 mt-1 bg-primary text-slate-950 font-bold"
+                    >
+                      Coba Lagi
+                    </Button>
+                  </div>
+                )
               ) : (
                 <canvas ref={canvasRef} className="rounded-lg" />
               )}
