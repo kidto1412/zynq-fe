@@ -5,6 +5,7 @@ import { TransferStreamView } from '@/features/transfer/presentation/components/
 import { TrustedDevicesView } from '@/features/devices/presentation/components/trusted-devices-view';
 import { ProUpgradeModal } from '@/features/billing/presentation/components/pro-upgrade-modal';
 import { AuthModal } from '@/features/auth/presentation/components/auth-modal';
+import { AuthGate } from '@/features/auth/presentation/components/auth-gate';
 import { ZynqLogo } from '@/shared/components/ui/zynq-logo';
 import { usePairingStore } from '@/features/pairing/presentation/stores/usePairingStore';
 import { useClipboardStore } from '@/features/clipboard/presentation/stores/useClipboardStore';
@@ -24,19 +25,21 @@ export const App: React.FC = () => {
   const { user, isAuthenticated, setAuthModalOpen, logout, checkAuth } = useAuthStore();
 
   React.useEffect(() => {
-    // 1. Verify existing session / token
+    // 1. Verify existing session / token on mount
     checkAuth();
+  }, [checkAuth]);
 
-    // 2. Establish real WebSocket Signaling with NestJS backend
-    initializeSocket();
-
-    // 3. Fetch initial devices and persistent vault history from PostgreSQL
-    fetchDevices();
-    loadVaultHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  React.useEffect(() => {
+    // 2. Only initialize WebRTC signaling, device registration, and vault history when authenticated
+    if (isAuthenticated) {
+      initializeSocket();
+      fetchDevices();
+      loadVaultHistory();
+    }
+  }, [isAuthenticated, initializeSocket, fetchDevices, loadVaultHistory]);
 
   const getTabTitle = () => {
+    if (!isAuthenticated) return 'Locked';
     switch (currentTab) {
       case 'radar':
         return 'Radar';
@@ -90,7 +93,13 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               aria-label="Scan QR Code"
-              onClick={() => setQrModalOpen(true)}
+              onClick={() => {
+                if (!isAuthenticated) {
+                  setAuthModalOpen(true, 'login');
+                } else {
+                  setQrModalOpen(true);
+                }
+              }}
               className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface hover:text-primary transition-all border border-white/[0.04]"
             >
               <QrCode className="w-5 h-5" />
@@ -134,65 +143,73 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full pt-20 px-4 max-w-xl mx-auto">
-        {currentTab === 'radar' && <RadarDiscoveryView />}
-        {currentTab === 'clipboard' && <UniversalClipboardView />}
-        {currentTab === 'transfer' && <TransferStreamView />}
-        {currentTab === 'devices' && <TrustedDevicesView />}
+      <main className="flex-1 w-full pt-20 px-4 max-w-xl mx-auto pb-24">
+        {!isAuthenticated ? (
+          <AuthGate />
+        ) : (
+          <>
+            {currentTab === 'radar' && <RadarDiscoveryView />}
+            {currentTab === 'clipboard' && <UniversalClipboardView />}
+            {currentTab === 'transfer' && <TransferStreamView />}
+            {currentTab === 'devices' && <TrustedDevicesView />}
+          </>
+        )}
       </main>
 
-      {/* Fixed Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 w-full z-40 pb-safe bg-surface-container-lowest/90 backdrop-blur-2xl border-t border-white/[0.04] shadow-[0_-1px_16px_rgba(0,0,0,0.5)]">
-        <div className="flex justify-around items-center h-16 px-4 max-w-xl mx-auto">
-          <button
-            onClick={() => setCurrentTab('radar')}
-            className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
-              currentTab === 'radar'
-                ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <Radio className="w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Radar</span>
-          </button>
+      {/* Fixed Bottom Navigation Bar - Only available after login */}
+      {isAuthenticated && (
+        <nav className="fixed bottom-0 w-full z-40 pb-safe bg-surface-container-lowest/90 backdrop-blur-2xl border-t border-white/[0.04] shadow-[0_-1px_16px_rgba(0,0,0,0.5)]">
+          <div className="flex justify-around items-center h-16 px-4 max-w-xl mx-auto">
+            <button
+              onClick={() => setCurrentTab('radar')}
+              className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
+                currentTab === 'radar'
+                  ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <Radio className="w-5 h-5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">Radar</span>
+            </button>
 
-          <button
-            onClick={() => setCurrentTab('clipboard')}
-            className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
-              currentTab === 'clipboard'
-                ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <Clipboard className="w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Clipboard</span>
-          </button>
+            <button
+              onClick={() => setCurrentTab('clipboard')}
+              className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
+                currentTab === 'clipboard'
+                  ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <Clipboard className="w-5 h-5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">Clipboard</span>
+            </button>
 
-          <button
-            onClick={() => setCurrentTab('transfer')}
-            className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
-              currentTab === 'transfer'
-                ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <ArrowLeftRight className="w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Transfer</span>
-          </button>
+            <button
+              onClick={() => setCurrentTab('transfer')}
+              className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
+                currentTab === 'transfer'
+                  ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <ArrowLeftRight className="w-5 h-5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">Transfer</span>
+            </button>
 
-          <button
-            onClick={() => setCurrentTab('devices')}
-            className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
-              currentTab === 'devices'
-                ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
-                : 'text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            <Laptop className="w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Devices</span>
-          </button>
-        </div>
-      </nav>
+            <button
+              onClick={() => setCurrentTab('devices')}
+              className={`flex flex-col items-center justify-center gap-1 w-16 h-12 transition-all rounded-xl ${
+                currentTab === 'devices'
+                  ? 'text-primary shadow-[0_0_16px_rgba(76,215,246,0.25)] bg-surface-container/60'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <Laptop className="w-5 h-5" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">Devices</span>
+            </button>
+          </div>
+        </nav>
+      )}
 
       {/* Modals */}
       <ProUpgradeModal open={isProModalOpen} onOpenChange={setIsProModalOpen} />
