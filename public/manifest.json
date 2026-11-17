@@ -1,0 +1,25 @@
+{
+  "name": "Zynq — Cross-Ecosystem Sync & Share",
+  "short_name": "Zynq",
+  "description": "High-speed zero-cloud P2P file transfer and clipboard sync for local Wi-Fi and offline personal hotspots.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0f19",
+  "theme_color": "#00f0ff",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "48x48 72x72 96x96 128x128 256x256 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/zynq-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

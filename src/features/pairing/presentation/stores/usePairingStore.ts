@@ -6,6 +6,15 @@ import { getLocalDeviceInfo } from '@/shared/lib/device-detector';
 import { api } from '@/shared/services/api';
 import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
 
+export interface HotspotQRPayload {
+  protocol: 'zynq-hotspot';
+  type: 'offer' | 'answer';
+  sdp: string;
+  deviceName: string;
+  platform: DevicePeer['platform'];
+  deviceId: string;
+}
+
 interface PairingStore {
   currentDevice: DevicePeer;
   nearbyPeers: DevicePeer[];
@@ -20,10 +29,19 @@ interface PairingStore {
   isCreatingRoom: boolean;
   errorMessage: string | null;
 
+  // Offline Hotspot Direct Mode
+  isHotspotActive: boolean;
+  hotspotStage: 'idle' | 'offering' | 'answered' | 'connected';
+  hotspotPayloadString: string | null;
+
   // Actions
   initializeSocket: () => void;
   createRealRoom: () => Promise<void>;
   joinRealRoom: (pin: string) => Promise<void>;
+  generateHotspotOffer: () => Promise<string>;
+  receiveHotspotOffer: (payloadStr: string) => Promise<string>;
+  receiveHotspotAnswer: (payloadStr: string) => Promise<void>;
+  resetHotspotState: () => void;
   selectPeer: (peer: DevicePeer) => void;
   setConnectionStatus: (status: PairingStore['connectionStatus']) => void;
   setQrModalOpen: (open: boolean) => void;
@@ -57,6 +75,11 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
   airdropEmulation: true,
   isCreatingRoom: false,
   errorMessage: null,
+
+  // Offline Hotspot Direct Mode
+  isHotspotActive: false,
+  hotspotStage: 'idle',
+  hotspotPayloadString: null,
 
   initializeSocket: () => {
     if (isSocketInitialized) return;
@@ -210,5 +233,117 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
   toggleAirdrop: () => set((state) => ({ airdropEmulation: !state.airdropEmulation })),
   triggerBeam: (peer) => {
     set({ connectionStatus: 'handshake', selectedPeer: peer });
+  },
+
+  resetHotspotState: () => {
+    set({
+      isHotspotActive: false,
+      hotspotStage: 'idle',
+      hotspotPayloadString: null,
+    });
+  },
+
+  generateHotspotOffer: async () => {
+    const { currentDevice } = get();
+    set({ connectionStatus: 'handshake', hotspotStage: 'offering' });
+
+    webrtcManager.onDataChannelOpen = () => {
+      console.log('[Hotspot Direct] DataChannel connected successfully!');
+      set({ connectionStatus: 'connected', isHotspotActive: true, hotspotStage: 'connected' });
+    };
+
+    const offerSdp = await webrtcManager.createHotspotOffer();
+    const payload: HotspotQRPayload = {
+      protocol: 'zynq-hotspot',
+      type: 'offer',
+      sdp: offerSdp,
+      deviceName: currentDevice.name.replace(' (You)', ''),
+      platform: currentDevice.platform,
+      deviceId: currentDevice.id,
+    };
+
+    const payloadStr = JSON.stringify(payload);
+    set({ hotspotPayloadString: payloadStr });
+    return payloadStr;
+  },
+
+  receiveHotspotOffer: async (payloadStr: string) => {
+    const { currentDevice } = get();
+    set({ connectionStatus: 'handshake' });
+
+    const payload: HotspotQRPayload = JSON.parse(payloadStr);
+    if (payload.protocol !== 'zynq-hotspot' || payload.type !== 'offer') {
+      throw new Error('QR bukan merupakan sinyal penawaran (Offer) Zynq Hotspot');
+    }
+
+    const hostPeer: DevicePeer = {
+      id: payload.deviceId || 'hotspot-host',
+      name: `${payload.deviceName} (Hotspot Host)`,
+      model: payload.platform,
+      platform: payload.platform,
+      signal: '100%',
+      isOnline: true,
+      ip: '192.168.43.1 · Hotspot Direct',
+      fingerprint: (payload.deviceId || 'HOTSPOT·HOST').substring(0, 14).toUpperCase(),
+    };
+
+    webrtcManager.onDataChannelOpen = () => {
+      console.log('[Hotspot Direct Client] DataChannel connected successfully!');
+      set((state) => ({
+        connectionStatus: 'connected',
+        isHotspotActive: true,
+        hotspotStage: 'connected',
+        activeTunnelPeer: hostPeer,
+        selectedPeer: hostPeer,
+        nearbyPeers: [hostPeer, ...state.nearbyPeers.filter((p) => p.id !== hostPeer.id)],
+      }));
+    };
+
+    const answerSdp = await webrtcManager.handleHotspotOffer(payload.sdp);
+    const answerPayload: HotspotQRPayload = {
+      protocol: 'zynq-hotspot',
+      type: 'answer',
+      sdp: answerSdp,
+      deviceName: currentDevice.name.replace(' (You)', ''),
+      platform: currentDevice.platform,
+      deviceId: currentDevice.id,
+    };
+
+    const answerStr = JSON.stringify(answerPayload);
+    set({
+      hotspotPayloadString: answerStr,
+      hotspotStage: 'answered',
+      activeTunnelPeer: hostPeer,
+      selectedPeer: hostPeer,
+    });
+    return answerStr;
+  },
+
+  receiveHotspotAnswer: async (payloadStr: string) => {
+    const payload: HotspotQRPayload = JSON.parse(payloadStr);
+    if (payload.protocol !== 'zynq-hotspot' || payload.type !== 'answer') {
+      throw new Error('QR bukan merupakan sinyal balasan (Answer) Zynq Hotspot');
+    }
+
+    const clientPeer: DevicePeer = {
+      id: payload.deviceId || 'hotspot-client',
+      name: `${payload.deviceName} (Hotspot Client)`,
+      model: payload.platform,
+      platform: payload.platform,
+      signal: '100%',
+      isOnline: true,
+      ip: 'Hotspot Client Subnet',
+      fingerprint: (payload.deviceId || 'HOTSPOT·CLIENT').substring(0, 14).toUpperCase(),
+    };
+
+    await webrtcManager.handleHotspotAnswer(payload.sdp);
+    set((state) => ({
+      connectionStatus: 'connected',
+      isHotspotActive: true,
+      hotspotStage: 'connected',
+      activeTunnelPeer: clientPeer,
+      selectedPeer: clientPeer,
+      nearbyPeers: [clientPeer, ...state.nearbyPeers.filter((p) => p.id !== clientPeer.id)],
+    }));
   },
 }));

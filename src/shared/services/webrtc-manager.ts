@@ -105,6 +105,97 @@ export class WebRTCManager {
     return this.peerConnection;
   }
 
+  /**
+   * Offline Hotspot Direct Mode Initialization
+   * Uses empty iceServers list to bypass all STUN/TURN queries.
+   * Gathers local subnet host candidates immediately without internet.
+   */
+  initHotspotConnection(isInitiator: boolean): RTCPeerConnection {
+    this.isInitiator = isInitiator;
+    this.peerConnection = new RTCPeerConnection({ iceServers: [] });
+
+    this.peerConnection.onconnectionstatechange = () => {
+      if (this.peerConnection) {
+        console.log(`[WebRTC Hotspot] Connection State: ${this.peerConnection.connectionState}`);
+        this.onConnectionStateChange?.(this.peerConnection.connectionState);
+      }
+    };
+
+    if (isInitiator) {
+      this.dataChannel = this.peerConnection.createDataChannel('zynq-hotspot-channel', {
+        ordered: true,
+      });
+      this.setupDataChannel(this.dataChannel, 'hotspot-peer');
+    } else {
+      this.peerConnection.ondatachannel = (event) => {
+        this.dataChannel = event.channel;
+        this.setupDataChannel(this.dataChannel, 'hotspot-peer');
+      };
+    }
+
+    return this.peerConnection;
+  }
+
+  async createHotspotOffer(): Promise<string> {
+    this.initHotspotConnection(true);
+    if (!this.peerConnection) throw new Error('PeerConnection not initialized');
+
+    const offer = await this.peerConnection.createOffer();
+    await this.peerConnection.setLocalDescription(offer);
+
+    // Wait for local host ICE candidate gathering to finish
+    if (this.peerConnection.iceGatheringState !== 'complete') {
+      await new Promise<void>((resolve) => {
+        const checkState = () => {
+          if (this.peerConnection?.iceGatheringState === 'complete') {
+            this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        this.peerConnection?.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(() => {
+          this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }, 700);
+      });
+    }
+
+    return this.peerConnection.localDescription?.sdp || offer.sdp || '';
+  }
+
+  async handleHotspotOffer(offerSdp: string): Promise<string> {
+    this.initHotspotConnection(false);
+    if (!this.peerConnection) throw new Error('PeerConnection not initialized');
+
+    await this.peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offerSdp }));
+    const answer = await this.peerConnection.createAnswer();
+    await this.peerConnection.setLocalDescription(answer);
+
+    if (this.peerConnection.iceGatheringState !== 'complete') {
+      await new Promise<void>((resolve) => {
+        const checkState = () => {
+          if (this.peerConnection?.iceGatheringState === 'complete') {
+            this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        this.peerConnection?.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(() => {
+          this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }, 700);
+      });
+    }
+
+    return this.peerConnection.localDescription?.sdp || answer.sdp || '';
+  }
+
+  async handleHotspotAnswer(answerSdp: string): Promise<void> {
+    if (!this.peerConnection) throw new Error('PeerConnection not initialized');
+    await this.peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
+  }
+
+
   public registerMeshPeer(peerId: string, channel: RTCDataChannel) {
     this.peerChannels.set(peerId, channel);
     this.setupDataChannel(channel, peerId);

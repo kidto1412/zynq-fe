@@ -15,10 +15,13 @@ import {
   Check, 
   RefreshCw,
   CameraOff,
-  AlertCircle
+  AlertCircle,
+  WifiOff,
+  Radio,
+  ArrowRight
 } from 'lucide-react';
 
-type Mode = 'display' | 'scan' | 'manual';
+type Mode = 'display' | 'scan' | 'manual' | 'hotspot';
 
 export const QrPairModal: React.FC = () => {
   const { 
@@ -29,7 +32,12 @@ export const QrPairModal: React.FC = () => {
     isCreatingRoom,
     errorMessage,
     joinRealRoom, 
-    createRealRoom
+    createRealRoom,
+    hotspotPayloadString,
+    generateHotspotOffer,
+    receiveHotspotOffer,
+    receiveHotspotAnswer,
+    resetHotspotState
   } = usePairingStore();
 
   const [mode, setMode] = React.useState<Mode>('display');
@@ -38,8 +46,10 @@ export const QrPairModal: React.FC = () => {
   const [copied, setCopied] = React.useState(false);
   const [cameraError, setCameraError] = React.useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = React.useState(false);
+  const [hotspotStep, setHotspotStep] = React.useState<'menu' | 'host' | 'client_scan' | 'client_answer' | 'host_scan_answer'>('menu');
 
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const hotspotCanvasRef = React.useRef<HTMLCanvasElement>(null);
   const scannerRef = React.useRef<Html5Qrcode | null>(null);
 
   const {
@@ -90,11 +100,39 @@ export const QrPairModal: React.FC = () => {
     }
   }, [isQrModalOpen, mode, qrString, activePin]);
 
-  // Handle Camera QR Scanner in 'scan' mode
+  // Render Hotspot QR Code to Canvas
+  React.useEffect(() => {
+    if (
+      isQrModalOpen &&
+      mode === 'hotspot' &&
+      (hotspotStep === 'host' || hotspotStep === 'client_answer') &&
+      hotspotCanvasRef.current &&
+      hotspotPayloadString
+    ) {
+      QRCode.toCanvas(
+        hotspotCanvasRef.current,
+        hotspotPayloadString,
+        {
+          width: 220,
+          margin: 1,
+          color: {
+            dark: '#064e3b',
+            light: '#ffffff',
+          },
+        },
+        (error) => {
+          if (error) console.error('[Hotspot QR] Render error:', error);
+        }
+      );
+    }
+  }, [isQrModalOpen, mode, hotspotStep, hotspotPayloadString]);
+
+  // Handle Camera QR Scanner in 'scan' or hotspot scan modes
   React.useEffect(() => {
     let isMounted = true;
+    const isScanningActive = mode === 'scan' || hotspotStep === 'client_scan' || hotspotStep === 'host_scan_answer';
 
-    if (isQrModalOpen && mode === 'scan') {
+    if (isQrModalOpen && isScanningActive) {
       setCameraError(null);
       setIsCameraActive(false);
 
@@ -113,14 +151,43 @@ export const QrPairModal: React.FC = () => {
             if (!isMounted) return;
             console.log('[QR Scanner] Detected text:', decodedText);
 
-            // Parse PIN from scanned string
+            // 1. Check for Offline Hotspot Direct Protocol
+            try {
+              const parsed = JSON.parse(decodedText);
+              if (parsed.protocol === 'zynq-hotspot') {
+                if (scannerRef.current && scannerRef.current.isScanning) {
+                  await scannerRef.current.stop();
+                }
+                setIsCameraActive(false);
+
+                if (parsed.type === 'offer') {
+                  setIsSubmitting(true);
+                  await receiveHotspotOffer(decodedText);
+                  setHotspotStep('client_answer');
+                  setIsSubmitting(false);
+                  return;
+                } else if (parsed.type === 'answer') {
+                  setIsSubmitting(true);
+                  await receiveHotspotAnswer(decodedText);
+                  setSuccess(true);
+                  setTimeout(() => {
+                    setSuccess(false);
+                    setQrModalOpen(false);
+                  }, 1200);
+                  setIsSubmitting(false);
+                  return;
+                }
+              }
+            } catch {
+              // Not hotspot JSON, continue to PIN evaluation
+            }
+
+            // 2. Parse PIN for Cloud Signaling
             let extractedPin = '';
             try {
               const parsed = JSON.parse(decodedText);
               if (parsed.pin) extractedPin = String(parsed.pin);
-            } catch {
-              // Not JSON, check for regex
-            }
+            } catch {}
 
             if (!extractedPin) {
               const match = decodedText.match(/(?:pin[=:_]|\b)(\d{6})\b/i);
@@ -191,17 +258,19 @@ export const QrPairModal: React.FC = () => {
       }
       setIsCameraActive(false);
     };
-  }, [isQrModalOpen, mode, joinRealRoom, setQrModalOpen]);
+  }, [isQrModalOpen, mode, hotspotStep, joinRealRoom, receiveHotspotOffer, receiveHotspotAnswer, setQrModalOpen]);
 
   // Clean up when modal closes
   React.useEffect(() => {
     if (!isQrModalOpen) {
       setMode('display');
+      setHotspotStep('menu');
       setSuccess(false);
       setCameraError(null);
       setCopied(false);
+      resetHotspotState();
     }
-  }, [isQrModalOpen]);
+  }, [isQrModalOpen, resetHotspotState]);
 
   // Manual PIN submission
   const onSubmit = async (data: PinInputValues) => {
@@ -246,44 +315,57 @@ export const QrPairModal: React.FC = () => {
         </div>
 
         {/* Mode Selector Tabs */}
-        <div className="grid grid-cols-3 gap-1 p-1 bg-surface-container rounded-xl w-full border border-white/[0.04]">
+        <div className="grid grid-cols-4 gap-1 p-1 bg-surface-container rounded-xl w-full border border-white/[0.04]">
           <button
             type="button"
-            onClick={() => setMode('display')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+            onClick={() => { setMode('display'); setHotspotStep('menu'); }}
+            className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-semibold transition-all ${
               mode === 'display'
                 ? 'bg-primary text-surface font-bold shadow-md'
                 : 'text-on-surface-variant hover:text-on-surface'
             }`}
           >
             <QrCode className="w-3.5 h-3.5" />
-            <span>Kode QR</span>
+            <span>QR</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setMode('scan')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+            onClick={() => { setMode('scan'); setHotspotStep('menu'); }}
+            className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-semibold transition-all ${
               mode === 'scan'
                 ? 'bg-primary text-surface font-bold shadow-md'
                 : 'text-on-surface-variant hover:text-on-surface'
             }`}
           >
             <Camera className="w-3.5 h-3.5" />
-            <span>Pindai QR</span>
+            <span>Pindai</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setMode('manual')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+            onClick={() => { setMode('manual'); setHotspotStep('menu'); }}
+            className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-semibold transition-all ${
               mode === 'manual'
                 ? 'bg-primary text-surface font-bold shadow-md'
                 : 'text-on-surface-variant hover:text-on-surface'
             }`}
           >
             <Keyboard className="w-3.5 h-3.5" />
-            <span>Ketik PIN</span>
+            <span>PIN</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setMode('hotspot'); setHotspotStep('menu'); }}
+            className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-semibold transition-all ${
+              mode === 'hotspot'
+                ? 'bg-emerald-400 text-slate-950 font-bold shadow-md'
+                : 'text-emerald-400/80 hover:text-emerald-400'
+            }`}
+          >
+            <WifiOff className="w-3.5 h-3.5" />
+            <span>Hotspot</span>
           </button>
         </div>
 
@@ -430,6 +512,183 @@ export const QrPairModal: React.FC = () => {
               )}
             </Button>
           </form>
+        )}
+
+        {/* Mode 4: Offline Hotspot Direct Mode (Zero Internet / Free & Pro) */}
+        {mode === 'hotspot' && (
+          <div className="flex flex-col items-center space-y-4 w-full animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold">
+              <WifiOff className="w-3.5 h-3.5" />
+              <span>Offline Direct · 0 KB Kuota Seluler</span>
+            </div>
+
+            {hotspotStep === 'menu' && (
+              <div className="flex flex-col gap-3 w-full">
+                <p className="text-xs text-on-surface-variant text-center">
+                  Hubungkan kedua perangkat ke Tethering / Hotspot Wi-Fi HP yang sama (tanpa perlu paket data internet).
+                </p>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsSubmitting(true);
+                    try {
+                      await generateHotspotOffer();
+                      setHotspotStep('host');
+                    } catch (err: any) {
+                      setCameraError(err.message || 'Gagal membuat penawaran hotspot');
+                    } finally {
+                      setIsSubmitting(false);
+                    }
+                  }}
+                  className="p-3.5 rounded-xl bg-surface-container hover:bg-surface-container-high border border-emerald-500/20 hover:border-emerald-500/50 flex items-center justify-between group transition-all text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
+                      <Radio className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">
+                        Mode Host (Buat Sinyal)
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Tampilkan QR sinyal untuk dipindai lawan
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCameraError(null);
+                    setHotspotStep('client_scan');
+                  }}
+                  className="p-3.5 rounded-xl bg-surface-container hover:bg-surface-container-high border border-white/[0.06] hover:border-emerald-500/50 flex items-center justify-between group transition-all text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white group-hover:text-primary transition-colors">
+                        Mode Klien (Pindai Host)
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Arahkan kamera ke QR sinyal Host
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-primary transition-colors" />
+                </button>
+              </div>
+            )}
+
+            {/* Sub-step: Host Displays Offer QR */}
+            {hotspotStep === 'host' && (
+              <div className="flex flex-col items-center space-y-3 w-full">
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
+                  <canvas ref={hotspotCanvasRef} className="rounded-lg" />
+                </div>
+                <p className="text-[11px] text-slate-400 max-w-xs">
+                  1. Minta perangkat lawan membuka tab <strong>Hotspot</strong> &rarr; <strong>Mode Klien</strong> untuk memindai QR ini.
+                </p>
+                <div className="flex gap-2 w-full">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      if (hotspotPayloadString) {
+                        navigator.clipboard.writeText(hotspotPayloadString);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }
+                    }}
+                    variant="outline"
+                    className="flex-1 text-xs h-9 bg-surface-container border-white/[0.08]"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                    <span>Salin Sinyal</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setHotspotStep('host_scan_answer')}
+                    className="flex-1 text-xs h-9 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold"
+                  >
+                    <Camera className="w-3.5 h-3.5 mr-1" />
+                    <span>Pindai Balasan Lawan</span>
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-step: Camera Viewfinder */}
+            {(hotspotStep === 'client_scan' || hotspotStep === 'host_scan_answer') && (
+              <div className="flex flex-col items-center space-y-3 w-full">
+                <div className="relative w-full aspect-square max-w-[260px] bg-black rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-center justify-center">
+                  <div id="zynq-qr-reader" className="w-full h-full" />
+                  {isCameraActive && (
+                    <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+                      <div className="w-44 h-44 border-2 border-emerald-400/70 rounded-xl relative">
+                        <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#10b981] animate-pulse top-1/2 -translate-y-1/2" />
+                      </div>
+                    </div>
+                  )}
+                  {!isCameraActive && !cameraError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-on-surface-variant p-4">
+                      <RefreshCw className="w-6 h-6 animate-spin text-emerald-400" />
+                      <span className="text-xs">Mengaktifkan kamera...</span>
+                    </div>
+                  )}
+                  {cameraError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-rose-400 p-4 text-xs">
+                      <CameraOff className="w-8 h-8 text-rose-400 mb-1" />
+                      <span>{cameraError}</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 max-w-xs">
+                  {hotspotStep === 'client_scan'
+                    ? 'Arahkan ke QR yang sedang ditampilkan oleh perangkat Host.'
+                    : 'Arahkan ke QR balasan yang ditampilkan di layar lawan.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setHotspotStep('menu')}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  Kembali ke Menu Hotspot
+                </button>
+              </div>
+            )}
+
+            {/* Sub-step: Client displays Answer QR */}
+            {hotspotStep === 'client_answer' && (
+              <div className="flex flex-col items-center space-y-3 w-full">
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
+                  <canvas ref={hotspotCanvasRef} className="rounded-lg" />
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs text-center max-w-xs">
+                  Sinyal Host berhasil diterima! Tunjukkan kode ini ke kamera Host untuk merampungkan koneksi P2P.
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (hotspotPayloadString) {
+                      navigator.clipboard.writeText(hotspotPayloadString);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full text-xs h-9 bg-surface-container border-white/[0.08]"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                  <span>Salin Sinyal Balasan</span>
+                </Button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Global Error Banner */}

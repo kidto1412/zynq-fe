@@ -19,7 +19,7 @@ export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = React.useState<Tab>('radar');
   const [isProModalOpen, setIsProModalOpen] = React.useState(false);
   
-  const { setQrModalOpen, initializeSocket, connectionStatus } = usePairingStore();
+  const { setQrModalOpen, initializeSocket, connectionStatus, isHotspotActive } = usePairingStore();
   const { loadVaultHistory } = useClipboardStore();
   const { fetchDevices } = useDeviceStore();
   const { user, isAuthenticated, setAuthModalOpen, logout, checkAuth } = useAuthStore();
@@ -80,7 +80,7 @@ export const App: React.FC = () => {
                 }`} />
                 <span className="font-mono text-[11px] text-on-surface-variant truncate">
                   {connectionStatus === 'connected'
-                    ? 'WebRTC P2P Direct · 5GHz'
+                    ? (isHotspotActive ? 'Hotspot Direct · 0 KB Kuota' : 'WebRTC P2P Direct · 5GHz')
                     : connectionStatus === 'handshake'
                     ? 'WebRTC Handshake'
                     : 'Siap Terhubung'}

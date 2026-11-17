@@ -9,11 +9,12 @@ import {
   Lock, 
   ArrowRight,
   UserPlus,
-  LogIn
+  LogIn,
+  WifiOff
 } from 'lucide-react';
 
 export const AuthGate: React.FC = () => {
-  const { setAuthModalOpen } = useAuthStore();
+  const { setAuthModalOpen, enableHotspotGuestMode } = useAuthStore();
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[75vh] px-2 py-6 text-center max-w-lg mx-auto">
@@ -32,12 +33,12 @@ export const AuthGate: React.FC = () => {
       <h1 className="font-headline text-3xl font-extrabold tracking-tight text-white mb-2">
         Akses Mesh Terproteksi
       </h1>
-      <p className="text-sm text-slate-400 max-w-sm mb-8 leading-relaxed">
+      <p className="text-sm text-slate-400 max-w-sm mb-6 leading-relaxed">
         Masuk atau daftar akun untuk menghubungkan perangkat Anda, mengaktifkan transfer WebRTC P2P direct, dan sinkronisasi clipboard terenkripsi.
       </p>
 
       {/* Main Action CTA Buttons */}
-      <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs mb-10">
+      <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs mb-4">
         <Button
           onClick={() => setAuthModalOpen(true, 'login')}
           className="flex-1 bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-slate-950 font-headline font-bold h-12 rounded-xl shadow-[0_0_20px_rgba(0,240,255,0.35)] flex items-center justify-center gap-2 text-sm transition-all active:scale-95"
@@ -55,6 +56,17 @@ export const AuthGate: React.FC = () => {
           <UserPlus className="w-4 h-4 text-primary" />
           <span>Daftar Akun</span>
         </Button>
+      </div>
+
+      {/* Offline Hotspot Direct Mode Action */}
+      <div className="w-full max-w-xs mb-8">
+        <button
+          onClick={() => enableHotspotGuestMode()}
+          className="w-full py-2.5 px-3 rounded-xl border border-white/[0.08] hover:border-emerald-400/40 bg-surface-container-low hover:bg-surface-container text-xs font-medium text-slate-300 hover:text-emerald-300 transition-all flex items-center justify-center gap-2 group"
+        >
+          <WifiOff className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+          <span>Offline Hotspot Direct (0 Kuota / PWA)</span>
+        </button>
       </div>
 
       {/* Core Ecosystem Pillars Grid */}
