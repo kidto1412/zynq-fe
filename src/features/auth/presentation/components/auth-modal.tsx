@@ -159,11 +159,11 @@ export const AuthModal: React.FC = () => {
         {activeTab === 'register' && (
           <form onSubmit={handleRegisterSubmit(onRegister)} className="space-y-3">
             <div className="space-y-1 text-left">
-              <label className="text-xs font-mono text-on-surface-variant">Nama Lengkap (Opsional)</label>
+              <label className="text-xs font-mono text-on-surface-variant">Nama Lengkap</label>
               <div className="relative">
                 <Input
                   type="text"
-                  placeholder="Nama atau alias Anda"
+                  placeholder="Nama lengkap Anda"
                   {...registerField('name')}
                   className="pl-9"
                 />
