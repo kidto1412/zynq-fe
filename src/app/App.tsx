@@ -83,7 +83,7 @@ export const App: React.FC = () => {
                     ? 'WebRTC P2P Direct · 5GHz'
                     : connectionStatus === 'handshake'
                     ? 'WebRTC Handshake'
-                    : 'Signaling Active · NestJS Gateway'}
+                    : 'Siap Terhubung'}
                 </span>
               </div>
             </div>

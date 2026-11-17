@@ -5,7 +5,7 @@ import { loginSchema, registerSchema, LoginInput, RegisterInput } from '../forms
 import { useAuthStore } from '../stores/useAuthStore';
 import { Dialog, Input } from '@/shared/components/ui/dialog';
 import { Button } from '@/shared/components/ui/button';
-import { Lock, Mail, User, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Lock, Mail, User, AlertCircle } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
   const { isAuthModalOpen, setAuthModalOpen, authTab, login, register: registerUser, isLoading } = useAuthStore();
@@ -211,12 +211,6 @@ export const AuthModal: React.FC = () => {
             </Button>
           </form>
         )}
-
-        {/* Security Footer */}
-        <div className="pt-2 border-t border-white/[0.04] flex items-center justify-center gap-1.5 text-[11px] font-mono text-on-surface-variant">
-          <ShieldCheck className="w-3.5 h-3.5 text-secondary" />
-          <span>Enkripsi kata sandi Scrypt & JWT Token 256-bit</span>
-        </div>
       </div>
     </Dialog>
   );
