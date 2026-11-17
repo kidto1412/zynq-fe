@@ -29,7 +29,8 @@ export class SignalingService {
 
     this.socket = io(signalingUrl, {
       path: '/socket.io',
-      transports: ['polling', 'websocket'],
+      transports: ['websocket', 'polling'],
+      withCredentials: false,
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 15,
