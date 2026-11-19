@@ -219,6 +219,11 @@ export const QrPairModal: React.FC = () => {
       setHasTorch(false);
       setIsTorchOn(false);
 
+      if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        setCameraError('Kamera browser memerlukan koneksi aman (HTTPS). Akses via IP LAN tanpa HTTPS diblokir oleh browser. Silakan gunakan tab "Input PIN" atau buka via localhost.');
+        return;
+      }
+
       const targetElement = document.getElementById('zynq-qr-reader');
       if (!targetElement) {
         return;
@@ -321,53 +326,37 @@ export const QrPairModal: React.FC = () => {
       };
 
       const startCamera = async () => {
-        // Enforce 720p constraints so ZXing on iOS Safari (which lacks native BarcodeDetector)
-        // processes small, lightweight video frames (720p vs 4K/1080p) without dropping FPS or lagging.
-        const preferredConstraints: MediaTrackConstraints = {
-          facingMode: 'environment',
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-        };
-
         try {
+          // 1. Prioritize back/environment camera for QR code scanning
           await html5QrCode.start(
-            preferredConstraints,
+            { facingMode: 'environment' },
             config,
             handleScanSuccess,
             () => {}
           );
         } catch (envErr) {
-          console.warn('[QR Scanner] Preferred 720p constraints failed, trying facingMode only:', envErr);
+          console.warn('[QR Scanner] Environment camera failed, trying camera list / user camera fallback:', envErr);
           try {
-            await html5QrCode.start(
-              { facingMode: 'environment' },
-              config,
-              handleScanSuccess,
-              () => {}
-            );
-          } catch (fallbackErr) {
-            console.warn('[QR Scanner] Environment camera failed, trying camera list fallback:', fallbackErr);
-            try {
-              const cameras = await Html5Qrcode.getCameras();
-              if (cameras && cameras.length > 0) {
-                const backCamera = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
-                await html5QrCode.start(
-                  backCamera.id,
-                  config,
-                  handleScanSuccess,
-                  () => {}
-                );
-              } else {
-                await html5QrCode.start(
-                  { facingMode: 'user' },
-                  config,
-                  handleScanSuccess,
-                  () => {}
-                );
-              }
-            } catch (finalErr) {
-              throw finalErr;
+            const cameras = await Html5Qrcode.getCameras();
+            if (cameras && cameras.length > 0) {
+              const backCamera = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
+              await html5QrCode.start(
+                backCamera.id,
+                config,
+                handleScanSuccess,
+                () => {}
+              );
+            } else {
+              await html5QrCode.start(
+                { facingMode: 'user' },
+                config,
+                handleScanSuccess,
+                () => {}
+              );
             }
+          } catch (fallbackErr) {
+            console.warn('[QR Scanner] Camera fallback also failed:', fallbackErr);
+            throw fallbackErr;
           }
         }
       };
@@ -409,14 +398,20 @@ export const QrPairModal: React.FC = () => {
         .catch((err: any) => {
           if (isMounted) {
             console.error('[QR Scanner] Camera start failed:', err);
-            const errStr = String(err?.message || err || '');
+            const errStr = String(err?.name || err?.message || err || '');
             let message = 'Akses kamera tidak diizinkan atau kamera tidak tersedia. Gunakan tab "Input PIN" atau "Tempel Sinyal Manual".';
-            if (errStr.includes('NotAllowedError') || errStr.includes('Permission denied')) {
-              message = 'Izin kamera ditolak oleh browser. Harap izinkan akses kamera di pengaturan browser.';
+            if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+              message = 'Kamera browser memerlukan koneksi aman (HTTPS). Akses via IP LAN tanpa HTTPS diblokir oleh browser. Gunakan tab "Input PIN" atau buka via localhost.';
+            } else if (errStr.toLowerCase().includes('secure context') || errStr.toLowerCase().includes('insecure')) {
+              message = 'Kamera browser memerlukan koneksi aman (HTTPS). Buka via localhost atau gunakan koneksi HTTPS.';
+            } else if (errStr.includes('NotAllowedError') || errStr.includes('Permission denied') || errStr.includes('PermissionDeniedError')) {
+              message = 'Izin kamera ditolak. Pastikan izin kamera aktif di browser dan di Pengaturan Sistem OS (Privacy & Security -> Camera).';
             } else if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
               message = 'Tidak ada perangkat kamera yang ditemukan pada perangkat ini.';
-            } else if (errStr.includes('NotReadableError') || errStr.includes('TrackStartError')) {
-              message = 'Kamera sedang digunakan oleh aplikasi lain atau sistem bermasalah.';
+            } else if (errStr.includes('NotReadableError') || errStr.includes('TrackStartError') || errStr.includes('Could not start video source')) {
+              message = 'Kamera sedang digunakan oleh aplikasi lain (Zoom/OBS/Meet/tab lain) atau sistem kamera terkunci. Tutup aplikasi tersebut dan coba lagi.';
+            } else if (errStr.includes('OverconstrainedError')) {
+              message = 'Pengaturan resolusi kamera tidak didukung oleh perangkat ini.';
             }
             setCameraError(message);
           }
