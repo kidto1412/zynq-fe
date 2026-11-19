@@ -85,10 +85,10 @@ export const QrPairModal: React.FC = () => {
     }
   }, [isQrModalOpen, activePin, activeRoomId, createRealRoom]);
 
-  // Generate payload for QR Code - Ultra-compact format to ensure Version 1 QR code
+  // Generate payload for QR Code - Ultra-compact uppercase format (Alphanumeric Version 1)
   // Large matrix modules so ZXing (iOS Safari) and BarcodeDetector (Android) detect instantly
   const qrString = React.useMemo(() => {
-    return `zynq:${activePin}`;
+    return `ZYNQ:${activePin}`;
   }, [activePin]);
 
   // Render QR Code to Canvas in 'display' mode
@@ -99,8 +99,8 @@ export const QrPairModal: React.FC = () => {
         qrString,
         {
           width: 280,
-          margin: 2,
-          errorCorrectionLevel: 'L',
+          margin: 3,
+          errorCorrectionLevel: 'M',
           color: {
             dark: '#000000',
             light: '#ffffff',
@@ -237,12 +237,13 @@ export const QrPairModal: React.FC = () => {
       scannerRef.current = html5QrCode;
 
       const config = {
-        fps: 10,
+        fps: 12,
+        disableFlip: true,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           const minDim = Math.min(viewfinderWidth, viewfinderHeight);
           return {
-            width: Math.floor(minDim * 0.90),
-            height: Math.floor(minDim * 0.90),
+            width: Math.floor(minDim * 0.85),
+            height: Math.floor(minDim * 0.85),
           };
         },
       };
