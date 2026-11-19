@@ -222,18 +222,17 @@ export const QrPairModal: React.FC = () => {
       setHasTorch(false);
       setIsTorchOn(false);
 
+      const targetElement = document.getElementById('zynq-qr-reader');
+      if (!targetElement) {
+        return;
+      }
+
       const html5QrCode = new Html5Qrcode('zynq-qr-reader', {
         useBarCodeDetectorIfSupported: true,
         formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
         verbose: false,
       });
       scannerRef.current = html5QrCode;
-
-      const cameraConstraints: MediaTrackConstraints = {
-        facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      };
 
       const config = {
         fps: 15,
@@ -244,126 +243,169 @@ export const QrPairModal: React.FC = () => {
             height: Math.floor(minDim * 0.92),
           };
         },
-        aspectRatio: 1.0,
       };
 
-      html5QrCode
-        .start(
-          cameraConstraints,
-          config,
-          async (decodedText) => {
-            if (!isMounted) return;
-            console.log('[QR Scanner] Detected text:', decodedText);
+      const handleScanSuccess = async (decodedText: string) => {
+        if (!isMounted) return;
+        console.log('[QR Scanner] Detected text:', decodedText);
 
-            // 1. Check for Offline Hotspot Direct Protocol
-            try {
-              const decompressed = decompressHotspotPayload(decodedText);
-              const parsed = JSON.parse(decompressed);
-              if (parsed.protocol === 'zynq-hotspot') {
-                if (scannerRef.current && scannerRef.current.isScanning) {
-                  await scannerRef.current.stop();
-                }
-                setIsCameraActive(false);
-
-                if (parsed.type === 'offer') {
-                  setIsSubmitting(true);
-                  await receiveHotspotOffer(decodedText);
-                  setHotspotStep('client_answer');
-                  setIsSubmitting(false);
-                  return;
-                } else if (parsed.type === 'answer') {
-                  setIsSubmitting(true);
-                  await receiveHotspotAnswer(decodedText);
-                  setSuccess(true);
-                  setTimeout(() => {
-                    setSuccess(false);
-                    setQrModalOpen(false);
-                  }, 1200);
-                  setIsSubmitting(false);
-                  return;
-                }
-              }
-            } catch {
-              // Not hotspot JSON, continue to PIN evaluation
+        // 1. Check for Offline Hotspot Direct Protocol
+        try {
+          const decompressed = decompressHotspotPayload(decodedText);
+          const parsed = JSON.parse(decompressed);
+          if (parsed.protocol === 'zynq-hotspot') {
+            if (scannerRef.current && scannerRef.current.isScanning) {
+              await scannerRef.current.stop();
             }
+            setIsCameraActive(false);
 
-            // 2. Parse PIN for Cloud Signaling
-            let extractedPin = '';
-            try {
-              const parsed = JSON.parse(decodedText);
-              if (parsed.pin) extractedPin = String(parsed.pin);
-            } catch {}
-
-            if (!extractedPin) {
-              const match = decodedText.match(/(?:pin[=:_]|\b)(\d{6})\b/i);
-              if (match) {
-                extractedPin = match[1];
-              } else if (/^\d{6}$/.test(decodedText.trim())) {
-                extractedPin = decodedText.trim();
-              }
+            if (parsed.type === 'offer') {
+              setIsSubmitting(true);
+              await receiveHotspotOffer(decodedText);
+              setHotspotStep('client_answer');
+              setIsSubmitting(false);
+              return;
+            } else if (parsed.type === 'answer') {
+              setIsSubmitting(true);
+              await receiveHotspotAnswer(decodedText);
+              setSuccess(true);
+              setTimeout(() => {
+                setSuccess(false);
+                setQrModalOpen(false);
+              }, 1200);
+              setIsSubmitting(false);
+              return;
             }
-
-            if (extractedPin && extractedPin.length === 6) {
-              try {
-                // Stop camera immediately on match
-                if (scannerRef.current && scannerRef.current.isScanning) {
-                  await scannerRef.current.stop();
-                }
-                setIsCameraActive(false);
-                setIsSubmitting(true);
-                await joinRealRoom(extractedPin);
-                setSuccess(true);
-                setTimeout(() => {
-                  setSuccess(false);
-                  setQrModalOpen(false);
-                }, 1200);
-              } catch (err: any) {
-                console.error('[QR Pairing] Join failed:', err);
-                const msg = err.message?.includes('does not exist')
-                  ? 'PIN / Kode QR tidak ditemukan di server atau sudah kedaluwarsa. Pastikan QR aktif di perangkat lawan.'
-                  : (err.message || 'Gagal pairing dengan QR ini');
-                setCameraError(msg);
-              } finally {
-                setIsSubmitting(false);
-              }
-            }
-          },
-          () => {
-            // Frame scan miss, ignore
           }
-        )
-        .then(() => {
-          if (isMounted) {
-            setIsCameraActive(true);
-            try {
-              const caps = html5QrCode.getRunningTrackCameraCapabilities();
-              const zoom = caps.zoomFeature();
-              if (zoom && zoom.isSupported()) {
-                setHasZoom(true);
-                setMaxZoom(zoom.max());
-                setZoomLevel(zoom.value() || 1);
-              } else {
-                setHasZoom(false);
-              }
+        } catch {
+          // Not hotspot JSON, continue to PIN evaluation
+        }
 
-              const torch = caps.torchFeature();
-              if (torch && torch.isSupported()) {
-                setHasTorch(true);
-                setIsTorchOn(torch.value() || false);
-              } else {
-                setHasTorch(false);
-              }
-            } catch {
-              // Track capabilities not accessible on this platform
+        // 2. Parse PIN for Cloud Signaling
+        let extractedPin = '';
+        try {
+          const parsed = JSON.parse(decodedText);
+          if (parsed.pin) extractedPin = String(parsed.pin);
+        } catch {}
+
+        if (!extractedPin) {
+          const match = decodedText.match(/(?:pin[=:_]|\b)(\d{6})\b/i);
+          if (match) {
+            extractedPin = match[1];
+          } else if (/^\d{6}$/.test(decodedText.trim())) {
+            extractedPin = decodedText.trim();
+          }
+        }
+
+        if (extractedPin && extractedPin.length === 6) {
+          try {
+            // Stop camera immediately on match
+            if (scannerRef.current && scannerRef.current.isScanning) {
+              await scannerRef.current.stop();
             }
+            setIsCameraActive(false);
+            setIsSubmitting(true);
+            await joinRealRoom(extractedPin);
+            setSuccess(true);
+            setTimeout(() => {
+              setSuccess(false);
+              setQrModalOpen(false);
+            }, 1200);
+          } catch (err: any) {
+            console.error('[QR Pairing] Join failed:', err);
+            const msg = err.message?.includes('does not exist')
+              ? 'PIN / Kode QR tidak ditemukan di server atau sudah kedaluwarsa. Pastikan QR aktif di perangkat lawan.'
+              : (err.message || 'Gagal pairing dengan QR ini');
+            setCameraError(msg);
+          } finally {
+            setIsSubmitting(false);
+          }
+        }
+      };
+
+      const startCamera = async () => {
+        try {
+          // Try environment camera (back camera) first
+          await html5QrCode.start(
+            { facingMode: 'environment' },
+            config,
+            handleScanSuccess,
+            () => {}
+          );
+        } catch (envErr) {
+          console.warn('[QR Scanner] Environment camera failed, trying fallback:', envErr);
+          // Fallback: try available cameras or user-facing camera (laptops / webcams)
+          try {
+            const cameras = await Html5Qrcode.getCameras();
+            if (cameras && cameras.length > 0) {
+              const cameraId = cameras[0].id;
+              await html5QrCode.start(
+                cameraId,
+                config,
+                handleScanSuccess,
+                () => {}
+              );
+            } else {
+              await html5QrCode.start(
+                { facingMode: 'user' },
+                config,
+                handleScanSuccess,
+                () => {}
+              );
+            }
+          } catch (fallbackErr) {
+            throw fallbackErr;
+          }
+        }
+      };
+
+      startCamera()
+        .then(() => {
+          if (!isMounted) {
+            if (html5QrCode.isScanning) {
+              html5QrCode.stop().catch(() => {}).finally(() => {
+                try { html5QrCode.clear(); } catch {}
+              });
+            }
+            return;
+          }
+
+          setIsCameraActive(true);
+          try {
+            const caps = html5QrCode.getRunningTrackCameraCapabilities();
+            const zoom = caps.zoomFeature();
+            if (zoom && zoom.isSupported()) {
+              setHasZoom(true);
+              setMaxZoom(zoom.max());
+              setZoomLevel(zoom.value() || 1);
+            } else {
+              setHasZoom(false);
+            }
+
+            const torch = caps.torchFeature();
+            if (torch && torch.isSupported()) {
+              setHasTorch(true);
+              setIsTorchOn(torch.value() || false);
+            } else {
+              setHasTorch(false);
+            }
+          } catch {
+            // Track capabilities not accessible on this platform
           }
         })
-        .catch((err) => {
+        .catch((err: any) => {
           if (isMounted) {
             console.error('[QR Scanner] Camera start failed:', err);
-            setCameraError(
-              'Akses kamera tidak diizinkan atau kamera tidak tersedia. Gunakan tab "Input PIN" atau "Tempel Sinyal Manual".'
-            );
+            const errStr = String(err?.message || err || '');
+            let message = 'Akses kamera tidak diizinkan atau kamera tidak tersedia. Gunakan tab "Input PIN" atau "Tempel Sinyal Manual".';
+            if (errStr.includes('NotAllowedError') || errStr.includes('Permission denied')) {
+              message = 'Izin kamera ditolak oleh browser. Harap izinkan akses kamera di pengaturan browser.';
+            } else if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
+              message = 'Tidak ada perangkat kamera yang ditemukan pada perangkat ini.';
+            } else if (errStr.includes('NotReadableError') || errStr.includes('TrackStartError')) {
+              message = 'Kamera sedang digunakan oleh aplikasi lain atau sistem bermasalah.';
+            }
+            setCameraError(message);
           }
         });
     }
@@ -371,20 +413,19 @@ export const QrPairModal: React.FC = () => {
     return () => {
       isMounted = false;
       if (scannerRef.current) {
-        if (scannerRef.current.isScanning) {
-          scannerRef.current
+        const scanner = scannerRef.current;
+        scannerRef.current = null;
+        if (scanner.isScanning) {
+          scanner
             .stop()
             .then(() => {
-              try { scannerRef.current?.clear(); } catch {}
-              scannerRef.current = null;
+              try { scanner.clear(); } catch {}
             })
             .catch(() => {
-              try { scannerRef.current?.clear(); } catch {}
-              scannerRef.current = null;
+              try { scanner.clear(); } catch {}
             });
         } else {
-          try { scannerRef.current.clear(); } catch {}
-          scannerRef.current = null;
+          try { scanner.clear(); } catch {}
         }
       }
       setIsCameraActive(false);
