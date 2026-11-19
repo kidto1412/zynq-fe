@@ -129,8 +129,8 @@ export const QrPairModal: React.FC = () => {
         hotspotCanvasRef.current,
         hotspotPayloadString,
         {
-          width: 260,
-          margin: 2,
+          width: 300,
+          margin: 3,
           errorCorrectionLevel: 'L',
           color: {
             dark: '#000000',
@@ -231,19 +231,20 @@ export const QrPairModal: React.FC = () => {
 
       const cameraConstraints: MediaTrackConstraints = {
         facingMode: 'environment',
-        width: { min: 720, ideal: 1280, max: 1920 },
-        height: { min: 720, ideal: 1280, max: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       };
 
       const config = {
-        fps: 20,
+        fps: 15,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           const minDim = Math.min(viewfinderWidth, viewfinderHeight);
           return {
-            width: Math.floor(minDim * 0.85),
-            height: Math.floor(minDim * 0.85),
+            width: Math.floor(minDim * 0.92),
+            height: Math.floor(minDim * 0.92),
           };
         },
+        aspectRatio: 1.0,
       };
 
       html5QrCode
@@ -761,13 +762,28 @@ export const QrPairModal: React.FC = () => {
             {/* Sub-step: Host Displays Offer QR */}
             {hotspotStep === 'host' && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[264px] min-h-[264px]">
-                  <canvas ref={hotspotCanvasRef} className="rounded-lg max-w-[260px] max-h-[260px]" />
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+                  <canvas
+                    ref={hotspotCanvasRef}
+                    className="w-[270px] h-[270px] sm:w-[300px] sm:h-[300px]"
+                    style={{ imageRendering: 'pixelated' }}
+                  />
                 </div>
-                <p className="text-[11px] text-slate-400 max-w-xs text-center">
-                  1. Minta perangkat lawan membuka tab <strong>Hotspot</strong> &rarr; <strong>Mode Klien</strong> untuk memindai QR ini.
-                </p>
-                <div className="flex gap-2 w-full">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center space-y-1 w-full max-w-xs">
+                  <div className="text-xs font-bold text-emerald-400">Langkah 1/2: Tampilkan ke Klien</div>
+                  <p className="text-[11px] text-slate-300">
+                    Buka <strong>Hotspot &rarr; Mode Klien</strong> di HP lawan untuk memindai QR ini.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 w-full max-w-xs">
+                  <Button
+                    type="button"
+                    onClick={() => setHotspotStep('host_scan_answer')}
+                    className="w-full text-xs h-10 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold shadow-md shadow-emerald-500/20"
+                  >
+                    <Camera className="w-4 h-4 mr-1.5" />
+                    <span>Langkah 2: Pindai Balasan Lawan</span>
+                  </Button>
                   <Button
                     type="button"
                     onClick={() => {
@@ -778,18 +794,10 @@ export const QrPairModal: React.FC = () => {
                       }
                     }}
                     variant="outline"
-                    className="flex-1 text-xs h-9 bg-surface-container border-white/[0.08]"
+                    className="w-full text-xs h-8 bg-surface-container border-white/[0.08]"
                   >
                     {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
-                    <span>Salin Sinyal</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => setHotspotStep('host_scan_answer')}
-                    className="flex-1 text-xs h-9 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold"
-                  >
-                    <Camera className="w-3.5 h-3.5 mr-1" />
-                    <span>Pindai Balasan Lawan</span>
+                    <span>Salin Sinyal (Manual Fallback)</span>
                   </Button>
                 </div>
               </div>
@@ -895,11 +903,18 @@ export const QrPairModal: React.FC = () => {
             {/* Sub-step: Client displays Answer QR */}
             {hotspotStep === 'client_answer' && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[264px] min-h-[264px]">
-                  <canvas ref={hotspotCanvasRef} className="rounded-lg max-w-[260px] max-h-[260px]" />
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+                  <canvas
+                    ref={hotspotCanvasRef}
+                    className="w-[270px] h-[270px] sm:w-[300px] sm:h-[300px]"
+                    style={{ imageRendering: 'pixelated' }}
+                  />
                 </div>
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs text-center max-w-xs">
-                  Sinyal Host berhasil diterima! Tunjukkan kode ini ke kamera Host atau salin sinyal untuk menyelesaikan pairing P2P.
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center space-y-1 w-full max-w-xs">
+                  <div className="text-xs font-bold text-emerald-400">Langkah 2/2: Sinyal Balasan Siap!</div>
+                  <p className="text-[11px] text-slate-300">
+                    Arahkan kamera <strong>Host</strong> (Langkah 2) ke QR ini untuk menyelesaikan koneksi.
+                  </p>
                 </div>
                 <Button
                   type="button"
@@ -911,7 +926,7 @@ export const QrPairModal: React.FC = () => {
                     }
                   }}
                   variant="outline"
-                  className="w-full text-xs h-9 bg-surface-container border-white/[0.08]"
+                  className="w-full max-w-xs text-xs h-9 bg-surface-container border-white/[0.08]"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-400 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                   <span>Salin Sinyal Balasan</span>

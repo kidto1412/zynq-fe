@@ -253,6 +253,14 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
       set({ connectionStatus: 'connected', isHotspotActive: true, hotspotStage: 'connected' });
     };
 
+    webrtcManager.onConnectionStateChange = (state) => {
+      if (state === 'connected') {
+        set({ connectionStatus: 'connected', isHotspotActive: true, hotspotStage: 'connected' });
+      } else if (state === 'failed') {
+        set({ connectionStatus: 'error', errorMessage: 'Koneksi P2P Hotspot terputus atau gagal terhubung.' });
+      }
+    };
+
     const offerSdp = await webrtcManager.createHotspotOffer();
     const payload: HotspotQRPayload = {
       protocol: 'zynq-hotspot',
@@ -301,6 +309,21 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
       }));
     };
 
+    webrtcManager.onConnectionStateChange = (state) => {
+      if (state === 'connected') {
+        set((s) => ({
+          connectionStatus: 'connected',
+          isHotspotActive: true,
+          hotspotStage: 'connected',
+          activeTunnelPeer: hostPeer,
+          selectedPeer: hostPeer,
+          nearbyPeers: [hostPeer, ...s.nearbyPeers.filter((p) => p.id !== hostPeer.id)],
+        }));
+      } else if (state === 'failed') {
+        set({ connectionStatus: 'error', errorMessage: 'Koneksi P2P Hotspot terputus atau gagal terhubung.' });
+      }
+    };
+
     const answerSdp = await webrtcManager.handleHotspotOffer(payload.sdp);
     const answerPayload: HotspotQRPayload = {
       protocol: 'zynq-hotspot',
@@ -339,14 +362,38 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
       fingerprint: (payload.deviceId || 'HOTSPOT·CLIENT').substring(0, 14).toUpperCase(),
     };
 
-    await webrtcManager.handleHotspotAnswer(payload.sdp);
+    webrtcManager.onDataChannelOpen = () => {
+      console.log('[Hotspot Direct Host] DataChannel opened with client!');
+      set((state) => ({
+        connectionStatus: 'connected',
+        isHotspotActive: true,
+        hotspotStage: 'connected',
+        activeTunnelPeer: clientPeer,
+        selectedPeer: clientPeer,
+        nearbyPeers: [clientPeer, ...state.nearbyPeers.filter((p) => p.id !== clientPeer.id)],
+      }));
+    };
+
+    webrtcManager.onConnectionStateChange = (state) => {
+      if (state === 'connected') {
+        set((s) => ({
+          connectionStatus: 'connected',
+          isHotspotActive: true,
+          hotspotStage: 'connected',
+          activeTunnelPeer: clientPeer,
+          selectedPeer: clientPeer,
+          nearbyPeers: [clientPeer, ...s.nearbyPeers.filter((p) => p.id !== clientPeer.id)],
+        }));
+      }
+    };
+
     set((state) => ({
-      connectionStatus: 'connected',
-      isHotspotActive: true,
-      hotspotStage: 'connected',
+      connectionStatus: 'handshake',
       activeTunnelPeer: clientPeer,
       selectedPeer: clientPeer,
       nearbyPeers: [clientPeer, ...state.nearbyPeers.filter((p) => p.id !== clientPeer.id)],
     }));
+
+    await webrtcManager.handleHotspotAnswer(payload.sdp);
   },
 }));

@@ -136,6 +136,114 @@ export class WebRTCManager {
     return this.peerConnection;
   }
 
+  /**
+   * Cleans and compresses raw WebRTC SDP for Hotspot QR code transmission.
+   * Strips non-essential extensions and keeps only local IPv4 UDP host candidates,
+   * significantly reducing payload size to produce a readable, low-density QR code.
+   */
+  private cleanSdpForHotspot(rawSdp: string): string {
+    const lines = rawSdp.split(/\r?\n/);
+    const result: string[] = [];
+    const seenCandidates = new Set<string>();
+
+    for (let line of lines) {
+      line = line.trim();
+      if (!line) continue;
+
+      if (line.startsWith('a=candidate:')) {
+        // Keep only UDP candidates
+        if (!line.includes(' udp ')) continue;
+
+        // Skip IPv6 candidates to save crucial QR density space
+        const parts = line.split(' ');
+        const ip = parts[4];
+        if (ip && ip.includes(':')) continue;
+
+        // Skip loopback / dummy candidates
+        if (ip === '127.0.0.1' || ip === '0.0.0.0') continue;
+
+        // Deduplicate
+        if (seenCandidates.has(line)) continue;
+        seenCandidates.add(line);
+      }
+
+      // Strip non-essential lines that take up valuable QR space
+      if (
+        line.startsWith('a=extmap:') ||
+        line.startsWith('a=extmap-allow-mixed') ||
+        line.startsWith('a=msid-semantic:') ||
+        line.startsWith('a=ice-options:trickle') ||
+        line.startsWith('a=rtcp-mux') ||
+        line.startsWith('a=rtcp-rsize')
+      ) {
+        continue;
+      }
+
+      result.push(line);
+    }
+
+    return result.join('\r\n') + '\r\n';
+  }
+
+  /**
+   * Listens for ICE candidate gathering and ensures host candidates are embedded into SDP.
+   */
+  private async waitForIceCandidates(pc: RTCPeerConnection, timeoutMs = 2500): Promise<string> {
+    const gatheredCandidates: string[] = [];
+
+    await new Promise<void>((resolve) => {
+      let isResolved = false;
+      const finish = () => {
+        if (!isResolved) {
+          isResolved = true;
+          cleanup();
+          resolve();
+        }
+      };
+
+      const onCandidate = (event: RTCPeerConnectionIceEvent) => {
+        if (event.candidate) {
+          gatheredCandidates.push(event.candidate.candidate);
+        } else {
+          // Gathering complete (event.candidate === null)
+          finish();
+        }
+      };
+
+      const onStateChange = () => {
+        if (pc.iceGatheringState === 'complete') {
+          finish();
+        }
+      };
+
+      const timer = setTimeout(finish, timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        pc.removeEventListener('icecandidate', onCandidate);
+        pc.removeEventListener('icegatheringstatechange', onStateChange);
+      };
+
+      pc.addEventListener('icecandidate', onCandidate);
+      pc.addEventListener('icegatheringstatechange', onStateChange);
+
+      if (pc.iceGatheringState === 'complete') {
+        finish();
+      }
+    });
+
+    let sdp = pc.localDescription?.sdp || '';
+    if (gatheredCandidates.length > 0) {
+      for (const cand of gatheredCandidates) {
+        if (!sdp.includes(cand)) {
+          sdp += `a=${cand}\r\n`;
+        }
+      }
+    }
+
+    return this.cleanSdpForHotspot(sdp);
+  }
+
   async createHotspotOffer(): Promise<string> {
     this.initHotspotConnection(true);
     if (!this.peerConnection) throw new Error('PeerConnection not initialized');
@@ -143,24 +251,8 @@ export class WebRTCManager {
     const offer = await this.peerConnection.createOffer();
     await this.peerConnection.setLocalDescription(offer);
 
-    // Wait for local host ICE candidate gathering to finish
-    if (this.peerConnection.iceGatheringState !== 'complete') {
-      await new Promise<void>((resolve) => {
-        const checkState = () => {
-          if (this.peerConnection?.iceGatheringState === 'complete') {
-            this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
-            resolve();
-          }
-        };
-        this.peerConnection?.addEventListener('icegatheringstatechange', checkState);
-        setTimeout(() => {
-          this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }, 1200);
-      });
-    }
-
-    return this.peerConnection.localDescription?.sdp || offer.sdp || '';
+    const sdp = await this.waitForIceCandidates(this.peerConnection, 2500);
+    return sdp || offer.sdp || '';
   }
 
   async handleHotspotOffer(offerSdp: string): Promise<string> {
@@ -171,23 +263,8 @@ export class WebRTCManager {
     const answer = await this.peerConnection.createAnswer();
     await this.peerConnection.setLocalDescription(answer);
 
-    if (this.peerConnection.iceGatheringState !== 'complete') {
-      await new Promise<void>((resolve) => {
-        const checkState = () => {
-          if (this.peerConnection?.iceGatheringState === 'complete') {
-            this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
-            resolve();
-          }
-        };
-        this.peerConnection?.addEventListener('icegatheringstatechange', checkState);
-        setTimeout(() => {
-          this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }, 1200);
-      });
-    }
-
-    return this.peerConnection.localDescription?.sdp || answer.sdp || '';
+    const sdp = await this.waitForIceCandidates(this.peerConnection, 2500);
+    return sdp || answer.sdp || '';
   }
 
   async handleHotspotAnswer(answerSdp: string): Promise<void> {

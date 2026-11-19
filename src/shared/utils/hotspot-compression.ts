@@ -1,9 +1,23 @@
 import pako from 'pako';
 
-export function compressHotspotPayload(data: unknown): string {
+export function compressHotspotPayload(data: any): string {
   try {
-    const jsonStr = typeof data === 'string' ? data : JSON.stringify(data);
-    const deflated = pako.deflate(jsonStr);
+    let payloadToCompress = data;
+
+    // Compact tuple serialization to drastically shrink QR code module density
+    if (typeof data === 'object' && data !== null && data.protocol === 'zynq-hotspot') {
+      payloadToCompress = [
+        'zh',
+        data.type === 'offer' ? 'o' : 'a',
+        data.sdp,
+        data.deviceName || '',
+        data.platform || 'unknown',
+        data.deviceId || '',
+      ];
+    }
+
+    const jsonStr = typeof payloadToCompress === 'string' ? payloadToCompress : JSON.stringify(payloadToCompress);
+    const deflated = pako.deflate(jsonStr, { level: 9 });
     let binary = '';
     const len = deflated.byteLength;
     for (let i = 0; i < len; i++) {
@@ -18,6 +32,8 @@ export function compressHotspotPayload(data: unknown): string {
 
 export function decompressHotspotPayload(input: string): string {
   const trimmed = input.trim();
+  let decompressedStr = trimmed;
+
   if (trimmed.startsWith('zh:')) {
     try {
       const b64 = trimmed.slice(3);
@@ -26,11 +42,29 @@ export function decompressHotspotPayload(input: string): string {
       for (let i = 0; i < binary.length; i++) {
         u8[i] = binary.charCodeAt(i);
       }
-      return pako.inflate(u8, { to: 'string' });
+      decompressedStr = pako.inflate(u8, { to: 'string' });
     } catch (err) {
       console.error('[Hotspot Decompression] Failed to decompress payload:', err);
       throw new Error('Format sinyal QR Hotspot rusak atau tidak valid.');
     }
   }
-  return trimmed;
+
+  // If payload was compressed using compact tuple, normalize back to HotspotQRPayload JSON
+  try {
+    const parsed = JSON.parse(decompressedStr);
+    if (Array.isArray(parsed) && parsed[0] === 'zh') {
+      return JSON.stringify({
+        protocol: 'zynq-hotspot',
+        type: parsed[1] === 'o' ? 'offer' : 'answer',
+        sdp: parsed[2],
+        deviceName: parsed[3],
+        platform: parsed[4],
+        deviceId: parsed[5],
+      });
+    }
+    return decompressedStr;
+  } catch {
+    return decompressedStr;
+  }
 }
+
