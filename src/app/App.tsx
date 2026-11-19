@@ -6,18 +6,34 @@ import { TrustedDevicesView } from '@/features/devices/presentation/components/t
 import { ProUpgradeModal } from '@/features/billing/presentation/components/pro-upgrade-modal';
 import { AuthModal } from '@/features/auth/presentation/components/auth-modal';
 import { AuthGate } from '@/features/auth/presentation/components/auth-gate';
+import { GuestDropModal } from '@/features/transfer/presentation/components/guest-drop-modal';
+import { GuestDropView } from '@/features/transfer/presentation/components/guest-drop-view';
 import { ZynqLogo } from '@/shared/components/ui/zynq-logo';
 import { usePairingStore } from '@/features/pairing/presentation/stores/usePairingStore';
 import { useClipboardStore } from '@/features/clipboard/presentation/stores/useClipboardStore';
 import { useDeviceStore } from '@/features/devices/presentation/stores/useDeviceStore';
 import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
-import { Radio, Clipboard, ArrowLeftRight, Laptop, QrCode, Sparkles, User, LogOut } from 'lucide-react';
+import { Radio, Clipboard, ArrowLeftRight, Laptop, QrCode, Sparkles, User, LogOut, Link2 } from 'lucide-react';
 
 type Tab = 'radar' | 'clipboard' | 'transfer' | 'devices';
 
 export const App: React.FC = () => {
+  // Check if visitor is accessing a Guest Drop URL (e.g. /drop/:slug)
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  const isDropRoute = pathname.startsWith('/drop/');
+  const dropSlug = isDropRoute ? pathname.replace(/^\/drop\/?/, '').split('/')[0] : null;
+
+  if (isDropRoute && dropSlug) {
+    return <GuestDropView slug={dropSlug} />;
+  }
+
+  return <MainApp />;
+};
+
+const MainApp: React.FC = () => {
   const [currentTab, setCurrentTab] = React.useState<Tab>('radar');
   const [isProModalOpen, setIsProModalOpen] = React.useState(false);
+  const [isGuestDropModalOpen, setIsGuestDropModalOpen] = React.useState(false);
   
   const { setQrModalOpen, initializeSocket, connectionStatus, isHotspotActive } = usePairingStore();
   const { loadVaultHistory } = useClipboardStore();
@@ -91,6 +107,23 @@ export const App: React.FC = () => {
 
           {/* Header Action Buttons */}
           <div className="flex items-center gap-2 flex-shrink-0">
+            {isAuthenticated && (
+              <button
+                aria-label="Guest Drop Link"
+                onClick={() => {
+                  if (user?.plan !== 'PRO_LIFETIME') {
+                    setIsProModalOpen(true);
+                  } else {
+                    setIsGuestDropModalOpen(true);
+                  }
+                }}
+                className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container hover:bg-surface-container-high text-cyan-400 hover:text-cyan-300 transition-all border border-cyan-500/20 shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+                title="Guest Drop Link (10 Menit)"
+              >
+                <Link2 className="w-5 h-5" />
+              </button>
+            )}
+
             <button
               aria-label="Scan QR Code"
               onClick={() => {
@@ -212,6 +245,11 @@ export const App: React.FC = () => {
       )}
 
       {/* Modals */}
+      <GuestDropModal
+        isOpen={isGuestDropModalOpen}
+        onClose={() => setIsGuestDropModalOpen(false)}
+        onOpenProModal={() => setIsProModalOpen(true)}
+      />
       <ProUpgradeModal open={isProModalOpen} onOpenChange={setIsProModalOpen} />
       <AuthModal />
     </div>

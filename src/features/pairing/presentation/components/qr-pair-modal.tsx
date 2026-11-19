@@ -1,12 +1,13 @@
 import React from 'react';
 import QRCode from 'qrcode';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { pinInputSchema, PinInputValues } from '../forms/pin-input.schema';
 import { usePairingStore } from '../stores/usePairingStore';
 import { Dialog, Input } from '@/shared/components/ui/dialog';
 import { Button } from '@/shared/components/ui/button';
+import { decompressHotspotPayload } from '@/shared/utils/hotspot-compression';
 import { 
   QrCode, 
   Camera, 
@@ -18,7 +19,10 @@ import {
   AlertCircle,
   WifiOff,
   Radio,
-  ArrowRight
+  ArrowRight,
+  Zap,
+  ZapOff,
+  ClipboardPaste
 } from 'lucide-react';
 
 type Mode = 'display' | 'scan' | 'manual' | 'hotspot';
@@ -47,6 +51,18 @@ export const QrPairModal: React.FC = () => {
   const [cameraError, setCameraError] = React.useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = React.useState(false);
   const [hotspotStep, setHotspotStep] = React.useState<'menu' | 'host' | 'client_scan' | 'client_answer' | 'host_scan_answer'>('menu');
+
+  // Scanner controls (Zoom & Torch)
+  const [isTorchOn, setIsTorchOn] = React.useState(false);
+  const [hasTorch, setHasTorch] = React.useState(false);
+  const [zoomLevel, setZoomLevel] = React.useState(1);
+  const [hasZoom, setHasZoom] = React.useState(false);
+  const [maxZoom, setMaxZoom] = React.useState(1);
+
+  // Manual Signal Paste Fallback
+  const [isManualPasteOpen, setIsManualPasteOpen] = React.useState(false);
+  const [manualPasteText, setManualPasteText] = React.useState('');
+  const [manualPasteError, setManualPasteError] = React.useState<string | null>(null);
 
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const hotspotCanvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -86,8 +102,8 @@ export const QrPairModal: React.FC = () => {
         canvasRef.current,
         qrString,
         {
-          width: 200,
-          margin: 1,
+          width: 220,
+          margin: 2,
           color: {
             dark: '#0f172a',
             light: '#ffffff',
@@ -113,10 +129,11 @@ export const QrPairModal: React.FC = () => {
         hotspotCanvasRef.current,
         hotspotPayloadString,
         {
-          width: 220,
-          margin: 1,
+          width: 260,
+          margin: 2,
+          errorCorrectionLevel: 'L',
           color: {
-            dark: '#064e3b',
+            dark: '#000000',
             light: '#ffffff',
           },
         },
@@ -127,6 +144,72 @@ export const QrPairModal: React.FC = () => {
     }
   }, [isQrModalOpen, mode, hotspotStep, hotspotPayloadString]);
 
+  // Camera Controls
+  const toggleZoom = async () => {
+    if (!scannerRef.current || !hasZoom) return;
+    try {
+      const caps = scannerRef.current.getRunningTrackCameraCapabilities();
+      const zoom = caps.zoomFeature();
+      if (zoom && zoom.isSupported()) {
+        const nextZoom = zoomLevel > 1.2 ? 1.0 : Math.min(2.0, maxZoom);
+        await zoom.apply(nextZoom);
+        setZoomLevel(nextZoom);
+      }
+    } catch (err) {
+      console.warn('[QR Scanner] Zoom error:', err);
+    }
+  };
+
+  const toggleTorch = async () => {
+    if (!scannerRef.current || !hasTorch) return;
+    try {
+      const caps = scannerRef.current.getRunningTrackCameraCapabilities();
+      const torch = caps.torchFeature();
+      if (torch && torch.isSupported()) {
+        const nextState = !isTorchOn;
+        await torch.apply(nextState);
+        setIsTorchOn(nextState);
+      }
+    } catch (err) {
+      console.warn('[QR Scanner] Torch error:', err);
+    }
+  };
+
+  const handleManualSignalSubmit = async (text: string) => {
+    const cleanText = text.trim();
+    if (!cleanText) return;
+    setManualPasteError(null);
+    setIsSubmitting(true);
+    try {
+      const decompressed = decompressHotspotPayload(cleanText);
+      const parsed = JSON.parse(decompressed);
+      if (parsed.protocol !== 'zynq-hotspot') {
+        throw new Error('Sinyal bukan protokol Zynq Hotspot yang valid.');
+      }
+
+      if (parsed.type === 'offer') {
+        await receiveHotspotOffer(cleanText);
+        setHotspotStep('client_answer');
+        setIsManualPasteOpen(false);
+        setManualPasteText('');
+      } else if (parsed.type === 'answer') {
+        await receiveHotspotAnswer(cleanText);
+        setSuccess(true);
+        setTimeout(() => {
+          setSuccess(false);
+          setQrModalOpen(false);
+        }, 1200);
+        setIsManualPasteOpen(false);
+        setManualPasteText('');
+      }
+    } catch (err: any) {
+      console.error('[Manual Signal Error]:', err);
+      setManualPasteError(err.message || 'Gagal memproses sinyal. Pastikan format sinyal benar.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // Handle Camera QR Scanner in 'scan' or hotspot scan modes
   React.useEffect(() => {
     let isMounted = true;
@@ -135,17 +218,37 @@ export const QrPairModal: React.FC = () => {
     if (isQrModalOpen && isScanningActive) {
       setCameraError(null);
       setIsCameraActive(false);
+      setHasZoom(false);
+      setHasTorch(false);
+      setIsTorchOn(false);
 
-      const html5QrCode = new Html5Qrcode('zynq-qr-reader');
+      const html5QrCode = new Html5Qrcode('zynq-qr-reader', {
+        useBarCodeDetectorIfSupported: true,
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        verbose: false,
+      });
       scannerRef.current = html5QrCode;
 
+      const cameraConstraints: MediaTrackConstraints = {
+        facingMode: 'environment',
+        width: { min: 720, ideal: 1280, max: 1920 },
+        height: { min: 720, ideal: 1280, max: 1080 },
+      };
+
       const config = {
-        fps: 15,
+        fps: 20,
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+          return {
+            width: Math.floor(minDim * 0.85),
+            height: Math.floor(minDim * 0.85),
+          };
+        },
       };
 
       html5QrCode
         .start(
-          { facingMode: 'environment' },
+          cameraConstraints,
           config,
           async (decodedText) => {
             if (!isMounted) return;
@@ -153,7 +256,8 @@ export const QrPairModal: React.FC = () => {
 
             // 1. Check for Offline Hotspot Direct Protocol
             try {
-              const parsed = JSON.parse(decodedText);
+              const decompressed = decompressHotspotPayload(decodedText);
+              const parsed = JSON.parse(decompressed);
               if (parsed.protocol === 'zynq-hotspot') {
                 if (scannerRef.current && scannerRef.current.isScanning) {
                   await scannerRef.current.stop();
@@ -228,13 +332,36 @@ export const QrPairModal: React.FC = () => {
           }
         )
         .then(() => {
-          if (isMounted) setIsCameraActive(true);
+          if (isMounted) {
+            setIsCameraActive(true);
+            try {
+              const caps = html5QrCode.getRunningTrackCameraCapabilities();
+              const zoom = caps.zoomFeature();
+              if (zoom && zoom.isSupported()) {
+                setHasZoom(true);
+                setMaxZoom(zoom.max());
+                setZoomLevel(zoom.value() || 1);
+              } else {
+                setHasZoom(false);
+              }
+
+              const torch = caps.torchFeature();
+              if (torch && torch.isSupported()) {
+                setHasTorch(true);
+                setIsTorchOn(torch.value() || false);
+              } else {
+                setHasTorch(false);
+              }
+            } catch {
+              // Track capabilities not accessible on this platform
+            }
+          }
         })
         .catch((err) => {
           if (isMounted) {
             console.error('[QR Scanner] Camera start failed:', err);
             setCameraError(
-              'Akses kamera tidak diizinkan atau kamera tidak tersedia. Gunakan tab "Input PIN".'
+              'Akses kamera tidak diizinkan atau kamera tidak tersedia. Gunakan tab "Input PIN" atau "Tempel Sinyal Manual".'
             );
           }
         });
@@ -247,18 +374,32 @@ export const QrPairModal: React.FC = () => {
           scannerRef.current
             .stop()
             .then(() => {
-              scannerRef.current?.clear();
+              try { scannerRef.current?.clear(); } catch {}
               scannerRef.current = null;
             })
-            .catch(() => {});
+            .catch(() => {
+              try { scannerRef.current?.clear(); } catch {}
+              scannerRef.current = null;
+            });
         } else {
-          scannerRef.current.clear();
+          try { scannerRef.current.clear(); } catch {}
           scannerRef.current = null;
         }
       }
       setIsCameraActive(false);
+      setHasZoom(false);
+      setHasTorch(false);
+      setIsTorchOn(false);
     };
-  }, [isQrModalOpen, mode, hotspotStep, joinRealRoom, receiveHotspotOffer, receiveHotspotAnswer, setQrModalOpen]);
+  }, [
+    isQrModalOpen,
+    mode,
+    hotspotStep,
+    joinRealRoom,
+    receiveHotspotOffer,
+    receiveHotspotAnswer,
+    setQrModalOpen,
+  ]);
 
   // Clean up when modal closes
   React.useEffect(() => {
@@ -443,23 +584,55 @@ export const QrPairModal: React.FC = () => {
 
               {/* Viewfinder Target Framing Overlay */}
               {isCameraActive && (
-                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
-                  <div className="w-48 h-48 border-2 border-primary/70 rounded-xl relative shadow-[0_0_15px_rgba(0,240,255,0.4)]">
-                    {/* Laser Scanner Animation */}
-                    <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_10px_#00f0ff] animate-pulse top-1/2 -translate-y-1/2" />
-                    <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-primary" />
-                    <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-primary" />
-                    <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-primary" />
-                    <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-primary" />
+                <>
+                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+                    <div className="w-48 h-48 border-2 border-primary/70 rounded-xl relative shadow-[0_0_15px_rgba(0,240,255,0.4)]">
+                      {/* Laser Scanner Animation */}
+                      <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_10px_#00f0ff] animate-pulse top-1/2 -translate-y-1/2" />
+                      <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-primary" />
+                      <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-primary" />
+                      <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-primary" />
+                      <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-primary" />
+                    </div>
                   </div>
-                </div>
+
+                  {/* Camera Controls Overlay (Zoom & Torch) */}
+                  <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-20">
+                    {hasZoom && (
+                      <button
+                        type="button"
+                        onClick={toggleZoom}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md border transition-all ${
+                          zoomLevel > 1.2
+                            ? 'bg-primary text-slate-950 border-cyan-300 shadow-md'
+                            : 'bg-black/60 text-white border-white/20 hover:bg-black/80'
+                        }`}
+                      >
+                        {zoomLevel > 1.2 ? '2x' : '1x'}
+                      </button>
+                    )}
+                    {hasTorch && (
+                      <button
+                        type="button"
+                        onClick={toggleTorch}
+                        className={`p-1.5 rounded-full backdrop-blur-md border transition-all ${
+                          isTorchOn
+                            ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md'
+                            : 'bg-black/60 text-white border-white/20 hover:bg-black/80'
+                        }`}
+                      >
+                        {isTorchOn ? <Zap className="w-3.5 h-3.5 fill-current" /> : <ZapOff className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                </>
               )}
 
               {/* Camera Loading or Error State */}
               {!isCameraActive && !cameraError && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-on-surface-variant p-4">
                   <RefreshCw className="w-6 h-6 animate-spin text-primary" />
-                  <span className="text-xs">Mengaktifkan kamera...</span>
+                  <span className="text-xs">Mengaktifkan kamera HD...</span>
                 </div>
               )}
 
@@ -472,7 +645,7 @@ export const QrPairModal: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-on-surface-variant max-w-xs">
-              Arahkan kamera ke layar perangkat lain yang menampilkan Kode QR Zynq.
+              Arahkan kamera ke layar perangkat lain yang menampilkan Kode QR Zynq (jarak ±20-30 cm).
             </p>
           </div>
         )}
@@ -588,10 +761,10 @@ export const QrPairModal: React.FC = () => {
             {/* Sub-step: Host Displays Offer QR */}
             {hotspotStep === 'host' && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
-                  <canvas ref={hotspotCanvasRef} className="rounded-lg" />
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[264px] min-h-[264px]">
+                  <canvas ref={hotspotCanvasRef} className="rounded-lg max-w-[260px] max-h-[260px]" />
                 </div>
-                <p className="text-[11px] text-slate-400 max-w-xs">
+                <p className="text-[11px] text-slate-400 max-w-xs text-center">
                   1. Minta perangkat lawan membuka tab <strong>Hotspot</strong> &rarr; <strong>Mode Klien</strong> untuk memindai QR ini.
                 </p>
                 <div className="flex gap-2 w-full">
@@ -625,21 +798,55 @@ export const QrPairModal: React.FC = () => {
             {/* Sub-step: Camera Viewfinder */}
             {(hotspotStep === 'client_scan' || hotspotStep === 'host_scan_answer') && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="relative w-full aspect-square max-w-[260px] bg-black rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-center justify-center">
+                <div className="relative w-full aspect-square max-w-[280px] bg-black rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-center justify-center">
                   <div id="zynq-qr-reader" className="w-full h-full" />
                   {isCameraActive && (
-                    <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
-                      <div className="w-44 h-44 border-2 border-emerald-400/70 rounded-xl relative">
-                        <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#10b981] animate-pulse top-1/2 -translate-y-1/2" />
+                    <>
+                      <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+                        <div className="w-52 h-52 border-2 border-emerald-400/80 rounded-xl relative shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                          <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#10b981] animate-pulse top-1/2 -translate-y-1/2" />
+                        </div>
                       </div>
-                    </div>
+
+                      {/* Camera Controls Overlay (Zoom & Torch) */}
+                      <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-20">
+                        {hasZoom && (
+                          <button
+                            type="button"
+                            onClick={toggleZoom}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md border transition-all ${
+                              zoomLevel > 1.2
+                                ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md'
+                                : 'bg-black/60 text-white border-white/20 hover:bg-black/80'
+                            }`}
+                          >
+                            {zoomLevel > 1.2 ? '2x' : '1x'}
+                          </button>
+                        )}
+                        {hasTorch && (
+                          <button
+                            type="button"
+                            onClick={toggleTorch}
+                            className={`p-1.5 rounded-full backdrop-blur-md border transition-all ${
+                              isTorchOn
+                                ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md'
+                                : 'bg-black/60 text-white border-white/20 hover:bg-black/80'
+                            }`}
+                          >
+                            {isTorchOn ? <Zap className="w-3.5 h-3.5 fill-current" /> : <ZapOff className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                      </div>
+                    </>
                   )}
+
                   {!isCameraActive && !cameraError && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-on-surface-variant p-4">
                       <RefreshCw className="w-6 h-6 animate-spin text-emerald-400" />
-                      <span className="text-xs">Mengaktifkan kamera...</span>
+                      <span className="text-xs">Mengaktifkan kamera HD...</span>
                     </div>
                   )}
+
                   {cameraError && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950 text-rose-400 p-4 text-xs">
                       <CameraOff className="w-8 h-8 text-rose-400 mb-1" />
@@ -647,29 +854,52 @@ export const QrPairModal: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-400 max-w-xs">
-                  {hotspotStep === 'client_scan'
-                    ? 'Arahkan ke QR yang sedang ditampilkan oleh perangkat Host.'
-                    : 'Arahkan ke QR balasan yang ditampilkan di layar lawan.'}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setHotspotStep('menu')}
-                  className="text-xs text-slate-400 hover:text-white"
-                >
-                  Kembali ke Menu Hotspot
-                </button>
+
+                {/* Clear Scanning Hint */}
+                <div className="px-3 py-2 rounded-xl bg-surface-container/60 border border-white/[0.06] text-[11px] text-slate-300 max-w-xs text-center space-y-1">
+                  <p className="font-medium text-emerald-400">
+                    💡 Tips: Jaga jarak ponsel ±20–30 cm
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Hindari mendekatkan ponsel terlalu dekat agar tidak blur. Gunakan tombol zoom jika QR tampak kecil.
+                  </p>
+                </div>
+
+                {/* Fallback Action Buttons */}
+                <div className="flex items-center gap-2 w-full max-w-xs">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setManualPasteError(null);
+                      setManualPasteText('');
+                      setIsManualPasteOpen(true);
+                    }}
+                    className="flex-1 text-xs h-9 bg-surface-container border-white/[0.08] hover:border-emerald-500/50"
+                  >
+                    <ClipboardPaste className="w-3.5 h-3.5 mr-1 text-emerald-400" />
+                    <span>Tempel Sinyal Manual</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setHotspotStep('menu')}
+                    className="text-xs h-9 text-slate-400 hover:text-white"
+                  >
+                    Batal
+                  </Button>
+                </div>
               </div>
             )}
 
             {/* Sub-step: Client displays Answer QR */}
             {hotspotStep === 'client_answer' && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[224px] min-h-[224px]">
-                  <canvas ref={hotspotCanvasRef} className="rounded-lg" />
+                <div className="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center min-w-[264px] min-h-[264px]">
+                  <canvas ref={hotspotCanvasRef} className="rounded-lg max-w-[260px] max-h-[260px]" />
                 </div>
                 <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs text-center max-w-xs">
-                  Sinyal Host berhasil diterima! Tunjukkan kode ini ke kamera Host untuk merampungkan koneksi P2P.
+                  Sinyal Host berhasil diterima! Tunjukkan kode ini ke kamera Host atau salin sinyal untuk menyelesaikan pairing P2P.
                 </div>
                 <Button
                   type="button"
@@ -688,6 +918,76 @@ export const QrPairModal: React.FC = () => {
                 </Button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Manual Signal Paste Modal / Drawer */}
+        {isManualPasteOpen && (
+          <div className="absolute inset-0 bg-surface/98 backdrop-blur-md rounded-2xl flex flex-col p-5 z-40 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                  <ClipboardPaste className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white">Tempel Sinyal Manual</h4>
+                  <p className="text-[10px] text-slate-400">Solusi jika kamera blur atau QR tidak terdeteksi</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManualPasteOpen(false);
+                  setManualPasteError(null);
+                }}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 py-3 flex flex-col space-y-2">
+              <label className="text-[11px] text-slate-300">
+                Tempel kode sinyal yang disalin dari perangkat {hotspotStep === 'client_scan' ? 'Host' : 'Klien'}:
+              </label>
+              <textarea
+                value={manualPasteText}
+                onChange={(e) => setManualPasteText(e.target.value)}
+                placeholder="Tempel kode sinyal di sini (awalan zh:...)"
+                className="w-full flex-1 min-h-[100px] p-2.5 rounded-xl bg-surface-container-highest border border-white/[0.08] text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500/60 resize-none"
+              />
+              {manualPasteError && (
+                <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px]">
+                  {manualPasteError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const clip = await navigator.clipboard.readText();
+                    if (clip) setManualPasteText(clip);
+                  } catch {}
+                }}
+                className="text-xs h-9 bg-surface-container border-white/[0.08]"
+              >
+                <Copy className="w-3.5 h-3.5 mr-1" />
+                <span>Dari Clipboard</span>
+              </Button>
+              <Button
+                type="button"
+                disabled={!manualPasteText.trim() || isSubmitting}
+                onClick={() => handleManualSignalSubmit(manualPasteText)}
+                className="flex-1 text-xs h-9 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold"
+              >
+                {isSubmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+                <span>Terapkan Sinyal</span>
+              </Button>
+            </div>
           </div>
         )}
 

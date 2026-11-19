@@ -4,6 +4,8 @@ import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
 import { GaugeRing } from './gauge-ring';
 import { ChunkStreamMatrix } from './chunk-stream-matrix';
 import { FileDropzone } from './file-dropzone';
+import { GuestDropModal } from './guest-drop-modal';
+import { ProUpgradeModal } from '@/features/billing/presentation/components/pro-upgrade-modal';
 import { formatBytes } from '@/shared/lib/utils';
 import {
   Smartphone,
@@ -18,12 +20,17 @@ import {
   ShieldCheck,
   AlertCircle,
   RefreshCw,
+  Link2,
+  Sparkles,
 } from 'lucide-react';
 
 export const TransferStreamView: React.FC = () => {
   const { activeTransfer, isPaused, togglePause, cancelTransfer, error } = useTransferStore();
   const user = useAuthStore((state) => state.user);
   const isPro = user?.plan === 'PRO_LIFETIME';
+
+  const [isGuestDropModalOpen, setIsGuestDropModalOpen] = React.useState(false);
+  const [isProModalOpen, setIsProModalOpen] = React.useState(false);
 
   const percentage =
     activeTransfer && activeTransfer.fileSize > 0
@@ -184,11 +191,55 @@ export const TransferStreamView: React.FC = () => {
         </div>
       )}
 
+      {/* Guest Drop Link Banner (10-Minute Ephemeral Link) */}
+      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-cyan-500/10 via-surface-container to-surface-container border border-cyan-500/20 flex items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 flex-shrink-0">
+            <Link2 className="w-5 h-5" />
+          </div>
+          <div className="min-w-0 text-left">
+            <div className="flex items-center gap-1.5">
+              <span className="font-headline text-xs font-bold text-white truncate">
+                Guest Drop Link (10 Menit)
+              </span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-400/20 text-cyan-300">
+                PRO
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 truncate">
+              Kirim tautan sekali pakai ke klien untuk terima file tanpa login
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            if (!isPro) {
+              setIsProModalOpen(true);
+            } else {
+              setIsGuestDropModalOpen(true);
+            }
+          }}
+          className="px-3.5 py-2 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-headline font-bold text-xs flex-shrink-0 flex items-center gap-1.5 transition-all shadow-[0_0_15px_rgba(0,240,255,0.25)] active:scale-95"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Buat Link</span>
+        </button>
+      </div>
+
       {/* Chunk Matrix Telemetry */}
       <ChunkStreamMatrix />
 
       {/* Dropzone for new files */}
       <FileDropzone />
+
+      {/* Modals */}
+      <GuestDropModal
+        isOpen={isGuestDropModalOpen}
+        onClose={() => setIsGuestDropModalOpen(false)}
+        onOpenProModal={() => setIsProModalOpen(true)}
+      />
+      <ProUpgradeModal open={isProModalOpen} onOpenChange={setIsProModalOpen} />
     </div>
   );
 };

@@ -1,0 +1,10 @@
+# robots.txt for Zynq (https://zynq.web.id)
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /socket.io/
+
+# Ephemeral guest drop sessions should not be indexed by search engines
+Disallow: /drop/
+
+Sitemap: https://zynq.web.id/sitemap.xml

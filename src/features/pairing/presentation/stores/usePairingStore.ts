@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { DevicePeer } from '../../domain/models/pairing-session.model';
 import { signalingService } from '@/shared/services/signaling-service';
 import { webrtcManager } from '@/shared/services/webrtc-manager';
+import { compressHotspotPayload, decompressHotspotPayload } from '@/shared/utils/hotspot-compression';
 import { getLocalDeviceInfo } from '@/shared/lib/device-detector';
 import { api } from '@/shared/services/api';
 import { useAuthStore } from '@/features/auth/presentation/stores/useAuthStore';
@@ -262,7 +263,7 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
       deviceId: currentDevice.id,
     };
 
-    const payloadStr = JSON.stringify(payload);
+    const payloadStr = compressHotspotPayload(payload);
     set({ hotspotPayloadString: payloadStr });
     return payloadStr;
   },
@@ -271,7 +272,8 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
     const { currentDevice } = get();
     set({ connectionStatus: 'handshake' });
 
-    const payload: HotspotQRPayload = JSON.parse(payloadStr);
+    const decompressed = decompressHotspotPayload(payloadStr);
+    const payload: HotspotQRPayload = JSON.parse(decompressed);
     if (payload.protocol !== 'zynq-hotspot' || payload.type !== 'offer') {
       throw new Error('QR bukan merupakan sinyal penawaran (Offer) Zynq Hotspot');
     }
@@ -309,7 +311,7 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
       deviceId: currentDevice.id,
     };
 
-    const answerStr = JSON.stringify(answerPayload);
+    const answerStr = compressHotspotPayload(answerPayload);
     set({
       hotspotPayloadString: answerStr,
       hotspotStage: 'answered',
@@ -320,7 +322,8 @@ export const usePairingStore = create<PairingStore>((set, get) => ({
   },
 
   receiveHotspotAnswer: async (payloadStr: string) => {
-    const payload: HotspotQRPayload = JSON.parse(payloadStr);
+    const decompressed = decompressHotspotPayload(payloadStr);
+    const payload: HotspotQRPayload = JSON.parse(decompressed);
     if (payload.protocol !== 'zynq-hotspot' || payload.type !== 'answer') {
       throw new Error('QR bukan merupakan sinyal balasan (Answer) Zynq Hotspot');
     }

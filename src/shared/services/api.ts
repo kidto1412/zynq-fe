@@ -187,4 +187,12 @@ export const api = {
     });
     return res.json();
   },
+
+  // Guest Drop Link API
+  async getDropLinkInfo(slug: string) {
+    const res = await fetch(`${getBaseUrl()}/api/v1/pairing/drop/${encodeURIComponent(slug)}`, {
+      headers: getHeaders(),
+    });
+    return res.json();
+  },
 };

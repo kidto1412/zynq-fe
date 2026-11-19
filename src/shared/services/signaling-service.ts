@@ -204,6 +204,116 @@ export class SignalingService {
     });
   }
 
+  async createDropLink(payload: {
+    deviceName?: string;
+    platform?: string;
+    publicKey?: string;
+    slug?: string;
+    isPro?: boolean;
+  }): Promise<{ roomId: string; slug: string; dropUrl: string; expiresAt: string; ttlSeconds: number }> {
+    const socket = await this.ensureConnected();
+
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const handleSuccess = (res: any) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        const data = res?.data || res;
+        this.currentRoomId = data.roomId;
+        resolve(data);
+      };
+
+      const handleError = (err: any) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        reject(new Error(err?.message || 'Gagal membuat Guest Drop Link'));
+      };
+
+      const timer = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        reject(new Error('Pembuatan Drop Link timeout'));
+      }, 8000);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off('drop:created', handleSuccess);
+        socket.off('drop:error', handleError);
+      };
+
+      socket.once('drop:created', handleSuccess);
+      socket.once('drop:error', handleError);
+
+      socket.emit('drop:create', payload, (ack: any) => {
+        if (ack) {
+          if (ack.event === 'drop:error' || ack.error) {
+            handleError(ack.data || ack);
+          } else {
+            handleSuccess(ack);
+          }
+        }
+      });
+    });
+  }
+
+  async joinDropLink(payload: {
+    slug: string;
+    deviceName?: string;
+    platform?: string;
+  }): Promise<{ roomId: string; host: any; slug: string; expiresAt: string }> {
+    const socket = await this.ensureConnected();
+
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const handleSuccess = (res: any) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        const data = res?.data || res;
+        this.currentRoomId = data.roomId;
+        resolve(data);
+      };
+
+      const handleError = (err: any) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        reject(new Error(err?.message || 'Gagal bergabung ke Guest Drop Link'));
+      };
+
+      const timer = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        reject(new Error('Koneksi ke Guest Drop Link timeout'));
+      }, 8000);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off('drop:joined', handleSuccess);
+        socket.off('drop:error', handleError);
+      };
+
+      socket.once('drop:joined', handleSuccess);
+      socket.once('drop:error', handleError);
+
+      socket.emit('drop:join', payload, (ack: any) => {
+        if (ack) {
+          if (ack.event === 'drop:error' || ack.error) {
+            handleError(ack.data || ack);
+          } else {
+            handleSuccess(ack);
+          }
+        }
+      });
+    });
+  }
+
   sendOffer(targetClientId: string, sdp: RTCSessionDescriptionInit) {
     this.socket?.emit('webrtc:offer', { targetClientId, sdp });
   }

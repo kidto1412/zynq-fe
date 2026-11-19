@@ -156,7 +156,7 @@ export class WebRTCManager {
         setTimeout(() => {
           this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
           resolve();
-        }, 700);
+        }, 1200);
       });
     }
 
@@ -183,7 +183,7 @@ export class WebRTCManager {
         setTimeout(() => {
           this.peerConnection?.removeEventListener('icegatheringstatechange', checkState);
           resolve();
-        }, 700);
+        }, 1200);
       });
     }
 
