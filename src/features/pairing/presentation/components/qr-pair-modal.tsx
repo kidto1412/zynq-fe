@@ -98,7 +98,7 @@ export const QrPairModal: React.FC = () => {
         canvasRef.current,
         qrString,
         {
-          width: 280,
+          width: 260,
           margin: 3,
           errorCorrectionLevel: 'M',
           color: {
@@ -239,13 +239,6 @@ export const QrPairModal: React.FC = () => {
       const config = {
         fps: 12,
         disableFlip: true,
-        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-          const minDim = Math.min(viewfinderWidth, viewfinderHeight);
-          return {
-            width: Math.floor(minDim * 0.85),
-            height: Math.floor(minDim * 0.85),
-          };
-        },
       };
 
       const handleScanSuccess = async (decodedText: string) => {
@@ -587,7 +580,7 @@ export const QrPairModal: React.FC = () => {
               ) : (
                 <canvas
                   ref={canvasRef}
-                  className="w-[230px] h-[230px] sm:w-[260px] sm:h-[260px] rounded-lg"
+                  className="w-[260px] h-[260px] rounded-lg shadow-sm"
                   style={{ imageRendering: 'pixelated' }}
                 />
               )}
@@ -633,7 +626,7 @@ export const QrPairModal: React.FC = () => {
         {/* Mode 2: Camera Scanner (Peer) */}
         {mode === 'scan' && (
           <div className="flex flex-col items-center space-y-3 w-full animate-in fade-in duration-200">
-            <div className="relative w-full aspect-square max-w-[280px] bg-black rounded-2xl overflow-hidden border border-primary/30 shadow-[0_0_20px_rgba(0,240,255,0.2)] flex items-center justify-center">
+            <div className="relative w-full aspect-[4/3] max-w-[320px] bg-black rounded-2xl overflow-hidden border border-primary/30 shadow-[0_0_20px_rgba(0,240,255,0.2)] flex items-center justify-center">
               {/* Camera Video Viewfinder Target */}
               <div id="zynq-qr-reader" className="w-full h-full" />
 
@@ -866,7 +859,7 @@ export const QrPairModal: React.FC = () => {
             {/* Sub-step: Camera Viewfinder */}
             {(hotspotStep === 'client_scan' || hotspotStep === 'host_scan_answer') && (
               <div className="flex flex-col items-center space-y-3 w-full">
-                <div className="relative w-full aspect-square max-w-[280px] bg-black rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-center justify-center">
+                <div className="relative w-full aspect-[4/3] max-w-[320px] bg-black rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)] flex items-center justify-center">
                   <div id="zynq-qr-reader" className="w-full h-full" />
                   {isCameraActive && (
                     <>

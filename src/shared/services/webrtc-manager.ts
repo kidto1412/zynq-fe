@@ -46,6 +46,9 @@ export class WebRTCManager {
   // Sender resume signals
   private pendingResumeOffset: { [fileId: string]: number } = {};
 
+  // ICE Candidate Queue (Prevents race conditions when candidates arrive before remoteDescription)
+  private pendingCandidates: RTCIceCandidateInit[] = [];
+
   // Callbacks
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onDataChannelOpen?: () => void;
@@ -56,8 +59,17 @@ export class WebRTCManager {
   public onPeersCountChange?: (count: number) => void;
 
   private rtcConfig: RTCConfiguration = {
+    iceCandidatePoolSize: 10,
     iceServers: [
-      { urls: env.VITE_STUN_SERVER || 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      ...(env.VITE_STUN_SERVER && !env.VITE_STUN_SERVER.includes('google.com')
+        ? [{ urls: env.VITE_STUN_SERVER }]
+        : []),
       ...(env.VITE_TURN_SERVER
         ? [
             {
@@ -75,6 +87,7 @@ export class WebRTCManager {
     onIceCandidate: (candidate: RTCIceCandidate) => void
   ): RTCPeerConnection {
     this.isInitiator = isInitiator;
+    this.pendingCandidates = [];
     this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
     this.peerConnection.onicecandidate = (event) => {
@@ -87,6 +100,23 @@ export class WebRTCManager {
       if (this.peerConnection) {
         console.log(`[WebRTC] Connection State: ${this.peerConnection.connectionState}`);
         this.onConnectionStateChange?.(this.peerConnection.connectionState);
+      }
+    };
+
+    this.peerConnection.oniceconnectionstatechange = () => {
+      if (this.peerConnection) {
+        console.log(`[WebRTC] ICE State: ${this.peerConnection.iceConnectionState}`);
+        if (
+          this.peerConnection.iceConnectionState === 'connected' ||
+          this.peerConnection.iceConnectionState === 'completed'
+        ) {
+          this.onConnectionStateChange?.('connected');
+        } else if (
+          this.peerConnection.iceConnectionState === 'failed' ||
+          this.peerConnection.iceConnectionState === 'disconnected'
+        ) {
+          this.onConnectionStateChange?.(this.peerConnection.iceConnectionState as any);
+        }
       }
     };
 
@@ -315,6 +345,17 @@ export class WebRTCManager {
       this.onDataChannelOpen?.();
       this.onPeersCountChange?.(this.getConnectedPeersCount());
     };
+
+    if (channel.readyState === 'open') {
+      setTimeout(() => {
+        if (channel.readyState === 'open') {
+          console.log(`[WebRTC] DataChannel was ALREADY OPEN (Mesh Node: ${peerId || 'primary'})`);
+          if (peerId) this.peerChannels.set(peerId, channel);
+          this.onDataChannelOpen?.();
+          this.onPeersCountChange?.(this.getConnectedPeersCount());
+        }
+      }, 0);
+    }
 
     channel.onclose = () => {
       console.log(`[WebRTC] DataChannel CLOSED (${peerId || 'primary'})`);
@@ -569,6 +610,7 @@ export class WebRTCManager {
   async handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
     if (!this.peerConnection) throw new Error('PeerConnection not initialized');
     await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    await this.drainPendingCandidates();
     const answer = await this.peerConnection.createAnswer();
     await this.peerConnection.setLocalDescription(answer);
     return answer;
@@ -577,11 +619,43 @@ export class WebRTCManager {
   async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
     if (!this.peerConnection) throw new Error('PeerConnection not initialized');
     await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    await this.drainPendingCandidates();
   }
 
-  async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.peerConnection) throw new Error('PeerConnection not initialized');
-    await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+  async addIceCandidate(candidate: RTCIceCandidateInit | null | undefined): Promise<void> {
+    if (!candidate || (!candidate.candidate && candidate.candidate !== '')) {
+      return;
+    }
+
+    if (!this.peerConnection || !this.peerConnection.remoteDescription || !this.peerConnection.remoteDescription.type) {
+      console.log('[WebRTC] Queueing ICE candidate because remoteDescription is not ready');
+      this.pendingCandidates.push(candidate);
+      return;
+    }
+
+    try {
+      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.warn('[WebRTC] addIceCandidate failed, queueing candidate:', err);
+      this.pendingCandidates.push(candidate);
+    }
+  }
+
+  private async drainPendingCandidates(): Promise<void> {
+    if (!this.peerConnection || !this.peerConnection.remoteDescription) return;
+    if (this.pendingCandidates.length === 0) return;
+
+    const queue = [...this.pendingCandidates];
+    this.pendingCandidates = [];
+    console.log(`[WebRTC] Draining ${queue.length} queued ICE candidates`);
+
+    for (const cand of queue) {
+      try {
+        await this.peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (err) {
+        console.warn('[WebRTC] Failed to add queued ICE candidate:', err);
+      }
+    }
   }
 }
 
