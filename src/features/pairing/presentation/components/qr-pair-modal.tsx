@@ -85,15 +85,11 @@ export const QrPairModal: React.FC = () => {
     }
   }, [isQrModalOpen, activePin, activeRoomId, createRealRoom]);
 
-  // Generate payload for QR Code
+  // Generate payload for QR Code - Ultra-compact format to ensure Version 1 QR code
+  // Large matrix modules so ZXing (iOS Safari) and BarcodeDetector (Android) detect instantly
   const qrString = React.useMemo(() => {
-    return JSON.stringify({
-      protocol: 'zynq-pair',
-      pin: activePin,
-      room: activeRoomId,
-      ts: Date.now(),
-    });
-  }, [activePin, activeRoomId]);
+    return `zynq:${activePin}`;
+  }, [activePin]);
 
   // Render QR Code to Canvas in 'display' mode
   React.useEffect(() => {
@@ -102,10 +98,11 @@ export const QrPairModal: React.FC = () => {
         canvasRef.current,
         qrString,
         {
-          width: 220,
+          width: 280,
           margin: 2,
+          errorCorrectionLevel: 'L',
           color: {
-            dark: '#0f172a',
+            dark: '#000000',
             light: '#ffffff',
           },
         },
@@ -235,12 +232,12 @@ export const QrPairModal: React.FC = () => {
       scannerRef.current = html5QrCode;
 
       const config = {
-        fps: 15,
+        fps: 10,
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           const minDim = Math.min(viewfinderWidth, viewfinderHeight);
           return {
-            width: Math.floor(minDim * 0.92),
-            height: Math.floor(minDim * 0.92),
+            width: Math.floor(minDim * 0.90),
+            height: Math.floor(minDim * 0.90),
           };
         },
       };
@@ -281,7 +278,7 @@ export const QrPairModal: React.FC = () => {
           // Not hotspot JSON, continue to PIN evaluation
         }
 
-        // 2. Parse PIN for Cloud Signaling
+        // 2. Parse PIN for Cloud Signaling (supports JSON, 'zynq:123456', or raw 6-digit PIN)
         let extractedPin = '';
         try {
           const parsed = JSON.parse(decodedText);
@@ -289,7 +286,7 @@ export const QrPairModal: React.FC = () => {
         } catch {}
 
         if (!extractedPin) {
-          const match = decodedText.match(/(?:pin[=:_]|\b)(\d{6})\b/i);
+          const match = decodedText.match(/(?:zynq[:/_-]|pin[=:_]|\b)(\d{6})\b/i);
           if (match) {
             extractedPin = match[1];
           } else if (/^\d{6}$/.test(decodedText.trim())) {
@@ -324,37 +321,53 @@ export const QrPairModal: React.FC = () => {
       };
 
       const startCamera = async () => {
+        // Enforce 720p constraints so ZXing on iOS Safari (which lacks native BarcodeDetector)
+        // processes small, lightweight video frames (720p vs 4K/1080p) without dropping FPS or lagging.
+        const preferredConstraints: MediaTrackConstraints = {
+          facingMode: 'environment',
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
+        };
+
         try {
-          // Try environment camera (back camera) first
           await html5QrCode.start(
-            { facingMode: 'environment' },
+            preferredConstraints,
             config,
             handleScanSuccess,
             () => {}
           );
         } catch (envErr) {
-          console.warn('[QR Scanner] Environment camera failed, trying fallback:', envErr);
-          // Fallback: try available cameras or user-facing camera (laptops / webcams)
+          console.warn('[QR Scanner] Preferred 720p constraints failed, trying facingMode only:', envErr);
           try {
-            const cameras = await Html5Qrcode.getCameras();
-            if (cameras && cameras.length > 0) {
-              const cameraId = cameras[0].id;
-              await html5QrCode.start(
-                cameraId,
-                config,
-                handleScanSuccess,
-                () => {}
-              );
-            } else {
-              await html5QrCode.start(
-                { facingMode: 'user' },
-                config,
-                handleScanSuccess,
-                () => {}
-              );
-            }
+            await html5QrCode.start(
+              { facingMode: 'environment' },
+              config,
+              handleScanSuccess,
+              () => {}
+            );
           } catch (fallbackErr) {
-            throw fallbackErr;
+            console.warn('[QR Scanner] Environment camera failed, trying camera list fallback:', fallbackErr);
+            try {
+              const cameras = await Html5Qrcode.getCameras();
+              if (cameras && cameras.length > 0) {
+                const backCamera = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+                await html5QrCode.start(
+                  backCamera.id,
+                  config,
+                  handleScanSuccess,
+                  () => {}
+                );
+              } else {
+                await html5QrCode.start(
+                  { facingMode: 'user' },
+                  config,
+                  handleScanSuccess,
+                  () => {}
+                );
+              }
+            } catch (finalErr) {
+              throw finalErr;
+            }
           }
         }
       };
@@ -576,7 +589,11 @@ export const QrPairModal: React.FC = () => {
                   </div>
                 )
               ) : (
-                <canvas ref={canvasRef} className="rounded-lg" />
+                <canvas
+                  ref={canvasRef}
+                  className="w-[230px] h-[230px] sm:w-[260px] sm:h-[260px] rounded-lg"
+                  style={{ imageRendering: 'pixelated' }}
+                />
               )}
             </div>
 
@@ -686,9 +703,15 @@ export const QrPairModal: React.FC = () => {
               )}
             </div>
 
-            <p className="text-[11px] text-on-surface-variant max-w-xs">
-              Arahkan kamera ke layar perangkat lain yang menampilkan Kode QR Zynq (jarak ±20-30 cm).
-            </p>
+            {/* Clear Scanning Hint */}
+            <div className="px-3 py-2 rounded-xl bg-surface-container/60 border border-white/[0.06] text-[11px] text-slate-300 max-w-xs text-center space-y-1">
+              <p className="font-medium text-cyan-400">
+                💡 Jaga jarak kamera ±20–30 cm
+              </p>
+              <p className="text-[10px] text-slate-400">
+                Lensa iPhone membutuhkan jarak agar tidak blur. Gunakan tombol zoom jika QR tampak kecil di layar.
+              </p>
+            </div>
           </div>
         )}
 
